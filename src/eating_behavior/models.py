@@ -1,3 +1,9 @@
+"""Thin wrappers around external model weights.
+
+This repository does not train models. It only loads detector/classifier
+artifacts and converts their outputs into stable project data structures.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,6 +16,8 @@ from ultralytics import YOLO
 
 @dataclass(frozen=True)
 class Detection:
+    """One object detection result."""
+
     class_id: int
     class_name: str
     confidence: float
@@ -17,12 +25,15 @@ class Detection:
 
     @property
     def area(self) -> int:
+        """Bounding-box area in pixels."""
         x1, y1, x2, y2 = self.xyxy
         return max(0, x2 - x1) * max(0, y2 - y1)
 
 
 @dataclass(frozen=True)
 class CoatPrediction:
+    """Coat/appearance classifier result for one cat crop."""
+
     class_id: int
     class_name: str
     confidence: float
@@ -31,6 +42,7 @@ class CoatPrediction:
 
 
 def class_name(names: Any, class_id: int) -> str:
+    """Read a class name from ultralytics dict/list metadata."""
     if isinstance(names, dict):
         return str(names.get(class_id, class_id))
     if isinstance(names, (list, tuple)) and 0 <= class_id < len(names):
@@ -39,6 +51,8 @@ def class_name(names: Any, class_id: int) -> str:
 
 
 class CatDetector:
+    """YOLO wrapper for cat and feeding_head detection."""
+
     def __init__(
         self,
         model_path: str | Path,
@@ -57,6 +71,7 @@ class CatDetector:
         self.device = device
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
+        """Run object detection on a frame."""
         kwargs: dict[str, Any] = {
             "imgsz": self.imgsz,
             "conf": self.confidence,
@@ -78,6 +93,7 @@ class CatDetector:
             boxes.conf.detach().cpu().numpy(),
         ):
             x1, y1, x2, y2 = [int(round(value)) for value in xyxy]
+            # Clamp model boxes to valid image bounds before cropping.
             x1 = max(0, min(w - 1, x1))
             y1 = max(0, min(h - 1, y1))
             x2 = max(0, min(w, x2))
@@ -97,6 +113,8 @@ class CatDetector:
 
 
 class CoatClassifier:
+    """YOLO classification wrapper for cat coat/appearance class."""
+
     def __init__(
         self,
         model_path: str | Path,
@@ -111,12 +129,14 @@ class CoatClassifier:
         self.device = device
 
     def classify(self, crop: np.ndarray) -> CoatPrediction:
+        """Classify a cat crop into a coat/appearance class."""
         kwargs: dict[str, Any] = {"imgsz": self.imgsz, "verbose": False}
         if self.device:
             kwargs["device"] = self.device
         result = self.model.predict(crop, **kwargs)[0]
         probs = getattr(result, "probs", None)
         if probs is None:
+            # Fallback keeps the pipeline alive if the classifier output is invalid.
             return CoatPrediction(-1, "unknown", 0.0, "unknown", 0.0)
         values = probs.data.detach().cpu().numpy().astype(float)
         order = np.argsort(values)[::-1]

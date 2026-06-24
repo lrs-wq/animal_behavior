@@ -1,3 +1,10 @@
+"""Command-line entrypoint.
+
+Two modes are supported:
+1. Debug mode: --source plus optional --source-id for a single input.
+2. Worker mode: no --source; run configured worker.source_ids.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -10,6 +17,7 @@ from .pipeline import RealtimePipeline
 
 
 def parse_source_ids(values: list[str] | None) -> tuple[str, ...]:
+    """Parse repeated or comma-separated --source-id values."""
     source_ids: list[str] = []
     for value in values or []:
         source_ids.extend(source_id_list(value))
@@ -17,6 +25,7 @@ def parse_source_ids(values: list[str] | None) -> tuple[str, ...]:
 
 
 def parse_args() -> argparse.Namespace:
+    """Define realtime inference CLI arguments."""
     parser = argparse.ArgumentParser(
         description=(
             "Run realtime cat detection, coat routing, identity confirmation, "
@@ -57,6 +66,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """Load configs, create the pipeline, and run the selected mode."""
     args = parse_args()
     if args.vid_stride < 1:
         print("--vid-stride must be >= 1", file=sys.stderr)
@@ -78,6 +88,7 @@ def main() -> int:
         print("--source can only be paired with at most one --source-id", file=sys.stderr)
         return 2
     if args.source:
+        # Debug mode: bind a raw source URI to one stable source_id.
         pipeline.run_source(
             args.source,
             source_id=source_ids[0] if source_ids else None,
@@ -85,6 +96,7 @@ def main() -> int:
             max_frames=args.max_frames,
         )
     else:
+        # Worker mode: run assigned source IDs from the local config snapshot.
         pipeline.run_configured_sources(
             source_ids=source_ids or None,
             vid_stride=args.vid_stride,

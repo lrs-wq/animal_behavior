@@ -1,3 +1,5 @@
+"""Tests for source snapshot parsing and worker source selection."""
+
 import pytest
 
 from eating_behavior.media import configured_source_specs, resolve_source_specs
@@ -5,6 +7,7 @@ from eating_behavior.pipeline import PipelineConfig, RealtimePipeline
 
 
 def test_configured_source_specs_keep_stable_id_separate_from_stream_url() -> None:
+    """source_id must remain separate from token-bearing stream_url."""
     specs = configured_source_specs(
         [
             {
@@ -25,6 +28,7 @@ def test_configured_source_specs_keep_stable_id_separate_from_stream_url() -> No
 
 
 def test_configured_source_specs_reject_duplicate_source_id() -> None:
+    """Duplicate source_id would make household ownership ambiguous."""
     with pytest.raises(ValueError, match="Duplicate configured source_id"):
         configured_source_specs(
             [
@@ -35,6 +39,7 @@ def test_configured_source_specs_reject_duplicate_source_id() -> None:
 
 
 def test_raw_source_can_be_tagged_with_stable_source_id() -> None:
+    """Debug --source can be tagged with a stable --source-id."""
     specs = resolve_source_specs("rtsp://debug.example/live", source_id="cam_debug_01")
 
     assert specs[0].source_id == "cam_debug_01"
@@ -42,6 +47,7 @@ def test_raw_source_can_be_tagged_with_stable_source_id() -> None:
 
 
 def test_pipeline_selects_worker_assigned_source_ids() -> None:
+    """worker_source_ids restrict which configured sources run."""
     pipeline = RealtimePipeline(
         detector=object(),
         coat_classifier=object(),

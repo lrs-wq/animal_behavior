@@ -1,9 +1,12 @@
+"""Tests for the short identity timeline used by eating events."""
+
 from eating_behavior.identity import IdentityDecision
 from eating_behavior.models import CoatPrediction
 from eating_behavior.pipeline import IdentityTimeline, event_cat_name
 
 
 def make_identity(cat_name: str, method: str = "direct_by_single_same_coat") -> IdentityDecision:
+    """Build a test identity decision."""
     return IdentityDecision(
         cat_name=cat_name,
         method=method,
@@ -14,6 +17,7 @@ def make_identity(cat_name: str, method: str = "direct_by_single_same_coat") -> 
 
 
 def make_coat(class_name: str) -> CoatPrediction:
+    """Build a test coat prediction."""
     return CoatPrediction(
         class_id=0,
         class_name=class_name,
@@ -24,17 +28,20 @@ def make_coat(class_name: str) -> CoatPrediction:
 
 
 def test_event_cat_name_is_blank_for_unconfirmed_identity() -> None:
+    """Internal unknown identities should become blank public cat_name."""
     identity = make_identity("unknown", method="needs_identity_confirmation")
     assert event_cat_name(identity) == ""
 
 
 def test_identity_timeline_ignores_unconfirmed_identity() -> None:
+    """Unconfirmed identities should not enter the timeline."""
     timeline = IdentityTimeline()
     timeline.add("cam01", 1.0, make_coat("silver_gray_white"), make_identity("unknown", "unregistered_coat"))
     assert timeline.infer("cam01", 2.0, 8.0) is None
 
 
 def test_identity_timeline_infers_recent_same_coat_identity() -> None:
+    """Timeline inference should prefer same-source and same-coat identity."""
     timeline = IdentityTimeline()
     timeline.add("cam01", 1.0, make_coat("silver_gray_white"), make_identity("silver_pure"))
     timeline.add("cam01", 2.0, make_coat("blue_cat"), make_identity("blue"))
@@ -46,6 +53,7 @@ def test_identity_timeline_infers_recent_same_coat_identity() -> None:
 
 
 def test_identity_timeline_prunes_old_observations() -> None:
+    """Old observations should be pruned outside the history window."""
     timeline = IdentityTimeline()
     timeline.add("cam01", 1.0, make_coat("silver_gray_white"), make_identity("silver_pure"))
 

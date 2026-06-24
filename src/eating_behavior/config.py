@@ -1,3 +1,9 @@
+"""Configuration loading and path resolution helpers.
+
+This module only handles generic YAML loading. Business meanings such as model
+paths, source snapshots, and identity routing are interpreted by callers.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def resolve_path(value: str | Path | None, base: Path | None = None) -> Path | None:
+    """Resolve a config path against the project root unless it is absolute."""
     if value is None or value == "":
         return None
     path = Path(value)
@@ -19,6 +26,7 @@ def resolve_path(value: str | Path | None, base: Path | None = None) -> Path | N
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
+    """Load a YAML file and require a mapping at the root."""
     config_path = resolve_path(path)
     if config_path is None:
         return {}

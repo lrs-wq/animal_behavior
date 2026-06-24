@@ -1,3 +1,10 @@
+"""Cat identity routing.
+
+The current identity stage is household-scoped coat routing. A stable
+source_id/camera_id first selects the customer household, then coat_class is
+matched only against cats registered in that household.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,12 +15,20 @@ import numpy as np
 
 @dataclass(frozen=True)
 class CatProfile:
+    """Registered cat profile inside one household."""
+
     name: str
     coat_class: str
 
 
 @dataclass(frozen=True)
 class IdentityDecision:
+    """Result of one identity decision.
+
+    cat_name may be an internal unknown value. Public event output converts
+    unconfirmed identities to an empty string.
+    """
+
     cat_name: str
     method: str
     confidence: float
@@ -23,6 +38,8 @@ class IdentityDecision:
 
 
 class HouseholdRegistry:
+    """Registered cats and source IDs for one household."""
+
     def __init__(
         self,
         cats: list[dict[str, Any]],
@@ -32,8 +49,11 @@ class HouseholdRegistry:
     ) -> None:
         self.unknown_name = unknown_name
         self.household_id = household_id
+        # source_ids are stable camera IDs owned by this household. sources is
+        # kept as a backward-compatible alias for older code/config.
         self.source_ids = tuple(normalize_source_key(source_id) for source_id in (source_ids or ()))
         self.sources = self.source_ids
+        # Ignore incomplete cat entries so bad config does not enter hot paths.
         self.cats = [
             CatProfile(name=str(item["name"]), coat_class=str(item["coat_class"]))
             for item in cats
@@ -41,16 +61,16 @@ class HouseholdRegistry:
         ]
 
     def candidates_for_coat(self, coat_class: str) -> list[CatProfile]:
+        """Return cats in this household with the predicted coat_class."""
         return [cat for cat in self.cats if cat.coat_class == coat_class]
 
 
 class IdentityService:
-    """Identity confirmation placeholder.
+    """Household-local identity service.
 
-    The first formal version supports the business routing rule: if only one
-    registered cat has the predicted coat class, confirm directly. When several
-    cats share the same coat class, this class returns unknown until a gallery
-    Re-ID backend is attached.
+    If exactly one registered cat has the predicted coat_class, confirm it
+    directly. Multiple same-coat cats stay unknown until a Re-ID backend is
+    attached.
     """
 
     def __init__(
@@ -62,9 +82,11 @@ class IdentityService:
         self.direct_when_single_same_coat = direct_when_single_same_coat
 
     def decide(self, coat_class: str, crop: np.ndarray | None = None) -> IdentityDecision:
+        """Decide identity from a household registry and a coat prediction."""
         candidates = self.registry.candidates_for_coat(coat_class)
         candidate_names = tuple(cat.name for cat in candidates)
         if self.direct_when_single_same_coat and len(candidates) == 1:
+            # This is the only current path that confirms a public cat name.
             return IdentityDecision(
                 cat_name=candidates[0].name,
                 method="direct_by_single_same_coat",
@@ -74,6 +96,7 @@ class IdentityService:
                 household_id=self.registry.household_id,
             )
         if len(candidates) > 1:
+            # Do not guess between multiple cats with the same coat_class.
             return IdentityDecision(
                 cat_name=self.registry.unknown_name,
                 method="needs_identity_confirmation",
@@ -82,6 +105,7 @@ class IdentityService:
                 candidates=candidate_names,
                 household_id=self.registry.household_id,
             )
+        # No registered cat has this coat in the selected household.
         return IdentityDecision(
             cat_name=self.registry.unknown_name,
             method="unregistered_coat",
@@ -93,10 +117,15 @@ class IdentityService:
 
 
 def normalize_source_key(source: str) -> str:
+    """Normalize source_id/camera_id strings used as dictionary keys."""
     return str(source).strip()
 
 
 def source_list(value: Any) -> tuple[str, ...]:
+    """Normalize source_id config values into a tuple.
+
+    Supports a string, comma-separated string, list, tuple, or set.
+    """
     if value is None:
         return ()
     if isinstance(value, str):
@@ -107,7 +136,7 @@ def source_list(value: Any) -> tuple[str, ...]:
 
 
 class SourceIdentityService:
-    """Route identity decisions to the household registered for each stable source_id."""
+    """Route identity decisions by stable source_id/camera_id."""
 
     def __init__(
         self,
@@ -125,10 +154,12 @@ class SourceIdentityService:
                 continue
             if source_key in self.services_by_source:
                 raise ValueError(f"Duplicate identity source mapping: {source_key}")
+            # One source_id must map to exactly one household.
             self.services_by_source[source_key] = IdentityService(registry, direct_when_single_same_coat)
 
     @classmethod
     def from_config(cls, identity_config: dict[str, Any]) -> "SourceIdentityService":
+        """Build source_id -> household identity services from config."""
         direct_when_single_same_coat = bool(identity_config.get("direct_when_single_same_coat", True))
         default_unknown_name = str(identity_config.get("unknown_name", "unknown"))
         default_registry = HouseholdRegistry(
@@ -150,6 +181,7 @@ class SourceIdentityService:
                 household.get(
                     "source_ids",
                     household.get(
+                        # camera_ids/camera_id are aliases for database naming.
                         "camera_ids",
                         household.get("camera_id", household.get("sources", household.get("source"))),
                     ),
@@ -172,11 +204,13 @@ class SourceIdentityService:
         )
 
     def decide(self, source: str, coat_class: str, crop: np.ndarray | None = None) -> IdentityDecision:
+        """Select household by source_id, then decide identity inside it."""
         source_key = normalize_source_key(source)
         service = self.services_by_source.get(source_key)
         if service is not None:
             return service.decide(coat_class, crop)
         if self.default_registry.cats:
+            # Default household keeps single-customer/debug configs working.
             return self.default_service.decide(coat_class, crop)
         return IdentityDecision(
             cat_name=self.default_registry.unknown_name,
@@ -188,6 +222,7 @@ class SourceIdentityService:
         )
 
     def household_id_for_source(self, source: str) -> str:
+        """Return household_id for source_id even when cat identity is unknown."""
         source_key = normalize_source_key(source)
         service = self.services_by_source.get(source_key)
         if service is not None:

@@ -1,3 +1,9 @@
+"""Video source resolution and frame iteration.
+
+uri/stream_url is used only for opening video. source_id/camera_id is the stable
+business key passed to identity routing, event output, and throttling.
+"""
+
 from __future__ import annotations
 
 import time
@@ -23,12 +29,20 @@ STREAM_PREFIXES = ("rtsp://", "rtmp://", "http://", "https://")
 
 @dataclass(frozen=True)
 class SourceSpec:
+    """One video source in a worker-local snapshot."""
+
     source_id: str
     uri: str
 
 
 @dataclass(frozen=True)
 class FramePacket:
+    """One decoded frame.
+
+    source is always the stable source_id. stream_url is kept only for optional
+    diagnostics and should not be used as an identity key.
+    """
+
     source: str
     frame_index: int
     timestamp_seconds: float
@@ -37,11 +51,13 @@ class FramePacket:
 
 
 def is_stream_source(source: str) -> bool:
+    """Return whether a source is a camera index or network stream."""
     value = source.strip().lower()
     return value.isdigit() or value.startswith(STREAM_PREFIXES)
 
 
 def resolve_sources(source: str) -> list[str]:
+    """Resolve CLI --source into one or more concrete video URIs."""
     if is_stream_source(source):
         return [source]
     path = Path(source)
@@ -60,10 +76,12 @@ def resolve_sources(source: str) -> list[str]:
 
 
 def normalize_source_id(value: Any) -> str:
+    """Normalize source_id/camera_id values."""
     return str(value).strip()
 
 
 def source_id_list(values: Any) -> tuple[str, ...]:
+    """Parse worker.source_ids or CLI --source-id values."""
     if values is None:
         return ()
     if isinstance(values, str):
@@ -77,6 +95,7 @@ def configured_source_specs(
     sources_config: Any,
     selected_source_ids: tuple[str, ...] | list[str] | set[str] | None = None,
 ) -> list[SourceSpec]:
+    """Build SourceSpec objects from worker-local source config."""
     selected = set(source_id_list(selected_source_ids))
     specs: list[SourceSpec] = []
     seen: set[str] = set()
@@ -85,6 +104,7 @@ def configured_source_specs(
             source_id = normalize_source_id(item)
             uri = item
         elif isinstance(item, dict):
+            # Accept several field names to ease DB/config-service integration.
             source_id = normalize_source_id(
                 item.get("source_id")
                 or item.get("camera_id")
@@ -120,6 +140,7 @@ def configured_source_specs(
 
 
 def resolve_source_specs(source: str, source_id: str | None = None) -> list[SourceSpec]:
+    """Convert debug --source input into SourceSpec objects."""
     uris = resolve_sources(source)
     if source_id is not None and len(uris) > 1:
         raise ValueError("--source-id can only be paired with --source when it resolves to a single source")
@@ -127,12 +148,18 @@ def resolve_source_specs(source: str, source_id: str | None = None) -> list[Sour
 
 
 def open_capture(source: str) -> cv2.VideoCapture:
+    """Open an OpenCV capture; digit-only strings are local camera indexes."""
     if source.strip().isdigit():
         return cv2.VideoCapture(int(source.strip()))
     return cv2.VideoCapture(source)
 
 
 def iter_frames(source: str | SourceSpec, vid_stride: int = 1, max_frames: int | None = None) -> Iterator[FramePacket]:
+    """Iterate frames from a video source.
+
+    FramePacket.source is the stable source_id even when the capture is opened
+    from a raw RTSP/HTTP URL.
+    """
     spec = source if isinstance(source, SourceSpec) else SourceSpec(source_id=str(source), uri=str(source))
     capture = open_capture(spec.uri)
     if not capture.isOpened():
@@ -150,6 +177,7 @@ def iter_frames(source: str | SourceSpec, vid_stride: int = 1, max_frames: int |
             if frame_index % max(1, vid_stride) != 0:
                 frame_index += 1
                 continue
+            # Live streams often do not expose reliable FPS, so use monotonic time.
             timestamp = time.monotonic() - start_time if live or fps <= 0 else frame_index / fps
             yield FramePacket(
                 source=spec.source_id,

@@ -1,5 +1,10 @@
+# YOLO detector for cat and feeding_head boxes.
 detection_model: D:/gogelila/Eating_behavior/yolo/runs/detect/cat-head-feeding-yolo/v9s_auto_np/weights/best.pt
+
+# Coat/appearance classifier. Class names must match identity cats coat_class.
 coat_classifier_model: D:/gogelila/Eating_behavior/yolo/runs_cls/cls_v2_yolo26n_200e_128_auto_batch/weights/best.pt
+
+# Reserved for future Re-ID or embedding-gallery identity backends.
 identity_gallery:
 feature_backend:
 feature_model:

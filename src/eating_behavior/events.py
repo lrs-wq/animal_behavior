@@ -1,3 +1,9 @@
+"""Announcement event recording.
+
+The current project writes structured events to files. Actual notification
+channels such as app push, speech, or WebSocket can consume these files later.
+"""
+
 from __future__ import annotations
 
 import csv
@@ -10,6 +16,12 @@ from typing import Any
 
 @dataclass
 class AnnouncementEvent:
+    """Structured event emitted by the realtime pipeline.
+
+    source is the stable source_id/camera_id, not the raw stream URL.
+    household_id is top-level so downstream systems can group by customer home.
+    """
+
     event_type: str
     source: str
     timestamp_seconds: float
@@ -23,6 +35,8 @@ class AnnouncementEvent:
 
 
 class AnnouncementRecorder:
+    """Append JSONL immediately and flush CSV at the end of a run."""
+
     def __init__(self, output_dir: str | Path) -> None:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -31,11 +45,13 @@ class AnnouncementRecorder:
         self._events: list[AnnouncementEvent] = []
 
     def record(self, event: AnnouncementEvent) -> None:
+        """Record one event in memory and append it to JSONL."""
         self._events.append(event)
         with self.jsonl_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
 
     def flush_csv(self) -> None:
+        """Write all events seen by this process to a CSV file."""
         fieldnames = [
             "event_type",
             "source",
@@ -59,10 +75,17 @@ class AnnouncementRecorder:
 
 
 class EventThrottler:
+    """Simple per-key event rate limiter.
+
+    Keys should include source_id so different customers do not suppress each
+    other's events.
+    """
+
     def __init__(self) -> None:
         self.last_event_time: dict[tuple[str, ...], float] = {}
 
     def allow(self, key: tuple[str, ...], timestamp_seconds: float, interval_seconds: float) -> bool:
+        """Return whether an event is allowed at timestamp_seconds."""
         last = self.last_event_time.get(key)
         if last is not None and timestamp_seconds - last < interval_seconds:
             return False

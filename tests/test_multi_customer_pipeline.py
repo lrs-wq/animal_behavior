@@ -1,3 +1,5 @@
+"""Pipeline tests for multi-customer source isolation."""
+
 import numpy as np
 
 from eating_behavior.events import AnnouncementRecorder
@@ -7,11 +9,15 @@ from eating_behavior.pipeline import PipelineConfig, RealtimePipeline
 
 
 class FakeDetector:
+    """Detector stub that always returns one cat box."""
+
     def detect(self, frame: np.ndarray) -> list[Detection]:
         return [Detection(class_id=0, class_name="cat", confidence=0.9, xyxy=(0, 0, 20, 20))]
 
 
 class FakeCoatClassifier:
+    """Classifier stub that always returns blue_cat."""
+
     def classify(self, crop: np.ndarray) -> CoatPrediction:
         return CoatPrediction(
             class_id=0,
@@ -23,6 +29,7 @@ class FakeCoatClassifier:
 
 
 def make_pipeline(tmp_path) -> RealtimePipeline:
+    """Build a pipeline with two customers and same cat/coat names."""
     identity_service = SourceIdentityService.from_config(
         {
             "households": [
@@ -57,6 +64,7 @@ def make_pipeline(tmp_path) -> RealtimePipeline:
 
 
 def test_pass_event_throttling_is_isolated_by_source(tmp_path) -> None:
+    """Same cat_name and coat_class should not throttle across source_id."""
     pipeline = make_pipeline(tmp_path)
     frame = np.zeros((30, 30, 3), dtype=np.uint8)
 

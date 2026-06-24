@@ -1,9 +1,12 @@
+"""Tests for household and source_id identity routing."""
+
 import pytest
 
 from eating_behavior.identity import HouseholdRegistry, IdentityService, SourceIdentityService
 
 
 def test_single_same_coat_confirms_identity() -> None:
+    """A single cat with the predicted coat can be confirmed directly."""
     registry = HouseholdRegistry([{"name": "blue", "coat_class": "blue_cat"}])
     decision = IdentityService(registry).decide("blue_cat")
     assert decision.cat_name == "blue"
@@ -11,6 +14,7 @@ def test_single_same_coat_confirms_identity() -> None:
 
 
 def test_multiple_same_coat_requires_identity_confirmation() -> None:
+    """Multiple cats with the same coat must stay unconfirmed."""
     registry = HouseholdRegistry(
         [
             {"name": "silver_a", "coat_class": "silver_gray_white"},
@@ -23,6 +27,7 @@ def test_multiple_same_coat_requires_identity_confirmation() -> None:
 
 
 def test_source_identity_routes_same_coat_to_source_household() -> None:
+    """The same coat_class can map to different cats by source_id."""
     service = SourceIdentityService.from_config(
         {
             "households": [
@@ -50,6 +55,7 @@ def test_source_identity_routes_same_coat_to_source_household() -> None:
 
 
 def test_source_identity_rejects_unregistered_source_without_default_household() -> None:
+    """An unknown source_id must not reuse another household."""
     service = SourceIdentityService.from_config(
         {
             "households": [
@@ -69,6 +75,7 @@ def test_source_identity_rejects_unregistered_source_without_default_household()
 
 
 def test_source_identity_rejects_duplicate_source_mapping() -> None:
+    """One source_id cannot belong to two households."""
     with pytest.raises(ValueError, match="Duplicate identity source mapping"):
         SourceIdentityService.from_config(
             {

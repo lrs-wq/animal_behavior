@@ -1,3 +1,10 @@
+"""Realtime inference pipeline.
+
+This module wires together detection, coat classification, source_id-based
+identity routing, event throttling, and event recording. The hot path uses only
+in-memory configuration.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +22,8 @@ from .models import CatDetector, CoatClassifier, CoatPrediction, Detection
 
 @dataclass
 class PipelineConfig:
+    """Runtime pipeline settings."""
+
     cat_classes: set[str]
     feeding_classes: set[str]
     coat_min_area: int
@@ -27,6 +36,8 @@ class PipelineConfig:
 
 @dataclass(frozen=True)
 class IdentityObservation:
+    """Confirmed identity observation stored in the short timeline."""
+
     source: str
     timestamp_seconds: float
     cat_name: str
@@ -37,6 +48,8 @@ class IdentityObservation:
 
 
 class IdentityTimeline:
+    """Short-lived identity cache per source_id."""
+
     def __init__(self) -> None:
         self.observations: list[IdentityObservation] = []
 
@@ -47,6 +60,7 @@ class IdentityTimeline:
         coat: CoatPrediction,
         identity: IdentityDecision,
     ) -> None:
+        """Store only identities that are safe to expose as public cat names."""
         cat_name = event_cat_name(identity)
         if not cat_name:
             return
@@ -63,6 +77,7 @@ class IdentityTimeline:
         )
 
     def prune(self, source: str, timestamp_seconds: float, window_seconds: float) -> None:
+        """Remove old observations for the current source_id."""
         self.observations = [
             observation
             for observation in self.observations
@@ -76,18 +91,21 @@ class IdentityTimeline:
         window_seconds: float,
         coat_class: str | None = None,
     ) -> IdentityObservation | None:
+        """Infer identity from recent observations on the same source_id."""
         candidates = [
             observation
             for observation in self.observations
             if observation.source == source and 0.0 <= timestamp_seconds - observation.timestamp_seconds <= window_seconds
         ]
         if coat_class and coat_class != "unknown":
+            # Reuse history only when the coat_class still matches.
             candidates = [observation for observation in candidates if observation.coat_class == coat_class]
         if not candidates:
             return None
         return max(
             candidates,
             key=lambda observation: (
+                # Prefer newer and more confident observations.
                 observation.confidence / (1.0 + timestamp_seconds - observation.timestamp_seconds),
                 observation.timestamp_seconds,
             ),
@@ -95,19 +113,23 @@ class IdentityTimeline:
 
 
 def normalize_class_set(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> set[str]:
+    """Normalize configured class names/IDs to lowercase strings."""
     return {str(value).lower() for value in (values or [])}
 
 
 def crop_frame(frame: np.ndarray, xyxy: tuple[int, int, int, int]) -> np.ndarray:
+    """Crop a frame by a detection box."""
     x1, y1, x2, y2 = xyxy
     return frame[y1:y2, x1:x2]
 
 
 def is_named_class(detection: Detection, names: set[str]) -> bool:
+    """Return whether a detection matches configured class names or IDs."""
     return detection.class_name.lower() in names or str(detection.class_id) in names
 
 
 def event_cat_name(identity: IdentityDecision | None) -> str:
+    """Convert an internal identity decision to public event cat_name."""
     if identity is None:
         return ""
     cat_name = (identity.cat_name or "").strip()
@@ -122,6 +144,7 @@ def associate_feeding_to_cat(
     feeding: Detection,
     cat_decisions: list[tuple[Detection, CoatPrediction, IdentityDecision]],
 ) -> tuple[CoatPrediction | None, IdentityDecision | None]:
+    """Associate a feeding_head detection with the most likely cat box."""
     if not cat_decisions:
         return None, None
     fx1, fy1, fx2, fy2 = feeding.xyxy
@@ -146,6 +169,8 @@ def associate_feeding_to_cat(
 
 
 class RealtimePipeline:
+    """Orchestrates realtime inference and event generation."""
+
     def __init__(
         self,
         detector: CatDetector,
@@ -175,6 +200,7 @@ class RealtimePipeline:
         device: str | None = None,
         show: bool = False,
     ) -> "RealtimePipeline":
+        """Construct the pipeline from model and runtime configuration."""
         detection_cfg = pipeline_config.get("detection", {})
         coat_cfg = pipeline_config.get("coat", {})
         identity_cfg = pipeline_config.get("identity", {})
@@ -195,6 +221,7 @@ class RealtimePipeline:
             device=device,
         )
         identity_service = SourceIdentityService.from_config(identity_cfg)
+        # Worker-local source snapshot: stable source_id plus real video URI.
         source_specs = configured_source_specs(sources_cfg)
         return cls(
             detector=detector,
@@ -216,9 +243,11 @@ class RealtimePipeline:
         )
 
     def configured_source_ids(self) -> tuple[str, ...]:
+        """Return all source IDs present in the loaded source snapshot."""
         return tuple(spec.source_id for spec in self.source_specs)
 
     def select_source_specs(self, source_ids: tuple[str, ...] | list[str] | set[str] | None = None) -> list[SourceSpec]:
+        """Select source specs from explicit IDs or worker_source_ids."""
         selected_ids = source_id_list(source_ids) if source_ids is not None else self.config.worker_source_ids
         if not selected_ids:
             return list(self.source_specs)
@@ -234,6 +263,11 @@ class RealtimePipeline:
         vid_stride: int = 1,
         max_frames: int | None = None,
     ) -> None:
+        """Run a sequence of source specs.
+
+        The current implementation runs sources sequentially; concurrency can be
+        added here later without changing frame processing semantics.
+        """
         for source_spec in source_specs:
             for packet in iter_frames(source_spec, vid_stride=vid_stride, max_frames=max_frames):
                 self.process_frame(packet.source, packet.timestamp_seconds, packet.frame)
@@ -253,6 +287,7 @@ class RealtimePipeline:
         vid_stride: int = 1,
         max_frames: int | None = None,
     ) -> None:
+        """Debug entrypoint for one raw source, optionally tagged by source_id."""
         self._run_source_specs(
             resolve_source_specs(source, source_id=source_id),
             vid_stride=vid_stride,
@@ -265,12 +300,14 @@ class RealtimePipeline:
         vid_stride: int = 1,
         max_frames: int | None = None,
     ) -> None:
+        """Worker entrypoint for configured source snapshots."""
         source_specs = self.select_source_specs(source_ids)
         if not source_specs:
             raise ValueError("No configured sources to run")
         self._run_source_specs(source_specs, vid_stride=vid_stride, max_frames=max_frames)
 
     def process_frame(self, source: str, timestamp_seconds: float, frame: np.ndarray) -> None:
+        """Process one frame and emit any resulting events."""
         self.identity_timeline.prune(source, timestamp_seconds, self.config.identity_history_seconds)
         detections = self.detector.detect(frame)
         cat_detections = [det for det in detections if is_named_class(det, self.config.cat_classes)]
@@ -280,9 +317,12 @@ class RealtimePipeline:
         for cat_det in cat_detections:
             crop = crop_frame(frame, cat_det.xyxy)
             if crop.size == 0 or cat_det.area < self.config.coat_min_area:
+                # Very small or invalid crops skip coat classification.
                 coat = CoatPrediction(-1, "unknown", 0.0, "unknown", 0.0)
                 identity = self.identity_service.decide(source, "unknown", crop)
             else:
+                # source is a stable source_id. Identity routing first selects
+                # the household, then resolves cat_name inside that household.
                 coat = self.coat_classifier.classify(crop)
                 identity = self.identity_service.decide(source, coat.class_name, crop)
             cat_decisions.append((cat_det, coat, identity))
@@ -291,6 +331,8 @@ class RealtimePipeline:
             coat, identity = associate_feeding_to_cat(feeding, cat_decisions)
             history_identity = None
             if not event_cat_name(identity):
+                # If the current feeding frame is uncertain, reuse recent
+                # confirmed identity from the same source_id and coat_class.
                 history_identity = self.identity_timeline.infer(
                     source=source,
                     timestamp_seconds=timestamp_seconds,
@@ -300,6 +342,7 @@ class RealtimePipeline:
             self._record_eating_event(source, timestamp_seconds, feeding, coat, identity, history_identity)
 
         for cat_det, coat, identity in cat_decisions:
+            # Timeline stores only confirmed identities; unknowns stay out.
             self.identity_timeline.add(source, timestamp_seconds, coat, identity)
             self._record_pass_event(source, timestamp_seconds, cat_det, coat, identity)
 
@@ -313,9 +356,12 @@ class RealtimePipeline:
         coat: CoatPrediction,
         identity: IdentityDecision,
     ) -> None:
+        """Record a cat-passed event."""
         cat_name = event_cat_name(identity)
         key_name = cat_name or coat.class_name or "unidentified"
         if not self.throttler.allow(
+            # Include source_id so customers with the same cat name do not
+            # suppress each other's events.
             ("cat_passed", source, key_name),
             timestamp_seconds,
             self.config.pass_event_interval_seconds,
@@ -352,18 +398,22 @@ class RealtimePipeline:
         identity: IdentityDecision | None,
         history_identity: IdentityObservation | None,
     ) -> None:
+        """Record a cat-eating event and choose the event-level cat name."""
         current_cat_name = event_cat_name(identity)
         if current_cat_name:
+            # Current-frame identity is the strongest source.
             cat_name = current_cat_name
             identity_source = "current_frame"
             identity_confidence = float(identity.confidence) if identity is not None else 0.0
             household_id = identity.household_id if identity is not None else ""
         elif history_identity is not None:
+            # Fall back to recent identity timeline for the same source_id.
             cat_name = history_identity.cat_name
             identity_source = "recent_identity_timeline"
             identity_confidence = history_identity.confidence
             household_id = history_identity.household_id
         else:
+            # Keep public cat_name blank when identity cannot be confirmed.
             cat_name = ""
             identity_source = "unidentified"
             identity_confidence = 0.0
@@ -375,6 +425,7 @@ class RealtimePipeline:
         coat_class = coat.class_name if coat is not None else "unknown"
         key_name = cat_name or coat_class or "unidentified"
         if not self.throttler.allow(
+            # Eating events are also throttled per source_id.
             ("cat_eating", source, key_name),
             timestamp_seconds,
             self.config.eating_event_interval_seconds,
@@ -414,6 +465,7 @@ class RealtimePipeline:
         )
 
     def _record_bowl_monitor_placeholder(self, source: str, timestamp_seconds: float) -> None:
+        """Record a placeholder food-status event until the food model lands."""
         household_id = self.identity_service.household_id_for_source(source)
         if not self.throttler.allow(
             ("bowl_food_status", source),

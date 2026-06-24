@@ -1,4 +1,5 @@
 detection:
+  # YOLO detection thresholds. cat is the full cat box, feeding_head marks eating.
   confidence: 0.25
   iou: 0.70
   imgsz: 640
@@ -8,18 +9,18 @@ detection:
     - feeding_head
 
 coat:
+  # Coat classifier settings. Tiny cat crops skip classification.
   imgsz: 128
   min_area: 16384
   confidence: 0.0
 
 worker:
-  # Production workers should receive only their assigned camera/source ids from
-  # the scheduler or a generated local snapshot. Empty means run all configured
-  # sources in this file.
+  # Production workers should receive only assigned source_id/camera_id values.
+  # Empty means run all configured sources in this local snapshot.
   source_ids: []
 
 sources: []
-# Worker-local source snapshot example. Keep stream_url out of identity keys:
+# Worker-local source snapshot example. stream_url is not an identity key:
 # sources:
 #   - source_id: cam_customer_a_01
 #     stream_url: rtsp://customer-a.example/live
@@ -27,11 +28,11 @@ sources: []
 #     stream_url: rtsp://customer-b.example/live
 
 identity:
-  # If exactly one registered cat in the source household has the predicted coat_class,
-  # identity is confirmed directly.
+  # Confirm identity directly only when one cat in the source household has the
+  # predicted coat_class.
   direct_when_single_same_coat: true
   unknown_name: unknown
-  # Backward-compatible default household. Used when no source-specific household matches.
+  # Backward-compatible default household for single-customer/debug configs.
   cats: []
   # Single-household example:
   # cats:
@@ -56,14 +57,16 @@ identity:
   #         coat_class: blue_cat
 
 events:
-  # When eating identity cannot be confirmed in the current frame, reuse a recent
-  # confirmed passing identity from the same source and same coat class.
+  # Reuse recent confirmed same-source and same-coat identity for eating events.
   identity_history_seconds: 8.0
+  # Event throttling intervals are scoped by source_id.
   pass_event_interval_seconds: 5.0
   eating_event_interval_seconds: 2.0
+  # Placeholder interval for future food-status model output.
   bowl_monitor_interval_seconds: 30.0
 
 output:
+  # Output toggles reserved for future output policies.
   save_event_jsonl: true
   save_event_csv: true
   save_frames: false
