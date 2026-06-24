@@ -28,6 +28,228 @@
 
 播报方式暂不在第一版实现中固定，当前只负责把事件结构化记录到文件，后续可以接语音、App 推送、WebSocket 或其他消费端。
 
+## 0.1 多客户 `source_id` / `camera_id` 对应逻辑
+
+万级客户规模下，推理进程不能把所有客户配置加载到本地，也不能把原始 RTSP / HTTP 视频流地址当成长期身份主键。本项目采用以下原则：
+
+```text
+stream_url 只负责拉流
+source_id / camera_id 才负责业务身份对应
+```
+
+推荐业务关系为：
+
+```text
+user_id
+  -> household_id
+      -> source_id / camera_id
+          -> stream_url
+      -> cats
+          -> cat_name
+          -> coat_class
+```
+
+推理 worker 本地只需要一份小快照：
+
+```text
+source_id -> stream_url
+source_id -> household_id
+household_id -> cats
+```
+
+中心数据库保存万级全量客户关系；每个推理进程只加载调度系统分配给自己的 20 路以上视频源数据。
+
+### 0.1.1 Worker 本地配置快照
+
+生产环境建议由调度服务或配置服务从中心库生成 worker 专属 `pipeline.yaml`：
+
+```yaml
+worker:
+  source_ids:
+    - cam_customer_a_01
+    - cam_customer_b_01
+
+sources:
+  - source_id: cam_customer_a_01
+    stream_url: rtsp://customer-a.example/live
+  - source_id: cam_customer_b_01
+    stream_url: rtsp://customer-b.example/live
+
+identity:
+  households:
+    - household_id: hh_customer_a
+      source_ids:
+        - cam_customer_a_01
+      cats:
+        - name: 小蓝
+          coat_class: blue_cat
+
+    - household_id: hh_customer_b
+      source_ids:
+        - cam_customer_b_01
+      cats:
+        - name: 小蓝
+          coat_class: blue_cat
+```
+
+这里两个客户都可以有名为“小蓝”的猫，也可以拥有相同 `coat_class`。系统会先用当前帧的 `source_id` 找到家庭，再只在这个家庭内按 `coat_class` 匹配猫咪，不会跨客户混淆。
+
+### 0.1.2 启动方式
+
+调试单路视频流：
+
+```powershell
+$env:PYTHONPATH="D:\gogelila\Eating_behavior\Eating_behavior_formal_project\src"
+
+python -m eating_behavior.main `
+  --source "rtsp://debug.example/live" `
+  --source-id "cam_debug_01" `
+  --pipeline-config configs/pipeline.yaml `
+  --models-config configs/models.yaml `
+  --output-dir outputs/realtime_debug
+```
+
+生产 worker 启动：
+
+```powershell
+$env:PYTHONPATH="D:\gogelila\Eating_behavior\Eating_behavior_formal_project\src"
+
+python -m eating_behavior.main `
+  --pipeline-config configs/worker_01.pipeline.yaml `
+  --models-config configs/models.yaml `
+  --output-dir outputs/worker_01
+```
+
+不传 `--source` 时，程序会读取配置中的 `worker.source_ids`，只运行本 worker 被分配的摄像头。如果 `worker.source_ids` 为空，则运行该快照中 `sources` 下的全部视频源。临时指定部分摄像头时，可以重复传入或逗号分隔：
+
+```powershell
+python -m eating_behavior.main `
+  --pipeline-config configs/worker_01.pipeline.yaml `
+  --source-id cam_customer_a_01 `
+  --source-id cam_customer_b_01
+```
+
+### 0.1.3 帧级对应链路
+
+每一帧的对应关系如下：
+
+```text
+SourceSpec(source_id, stream_url)
+  -> 用 stream_url 打开视频流
+  -> FramePacket.source = source_id
+  -> 猫检测和花色分类
+  -> identity_service.decide(source_id, coat_class)
+  -> source_id 找 household_id
+  -> household_id 内按 coat_class 找 cat_name
+  -> 输出事件 source_id + household_id + cat_name
+```
+
+当前身份判断规则：
+
+```text
+同一家庭内该 coat_class 只有一只猫
+  -> 直接返回这只猫的 cat_name
+
+同一家庭内该 coat_class 有多只猫
+  -> 返回内部 unknown
+  -> 事件 cat_name 留空
+  -> details 中保留 identity_candidates，等待后续 Re-ID 分支确认
+
+该 source_id 没有匹配到家庭
+  -> 返回内部 unregistered_source
+  -> 事件 cat_name 留空
+```
+
+事件输出中：
+
+- `source`：稳定 `source_id` / `camera_id`，不输出原始流地址。
+- `household_id`：客户家庭 ID，便于下游按客户聚合。
+- `cat_name`：确认身份时输出猫名；无法确认时为空字符串。
+- `details.identity_method`：记录身份来源和失败原因，例如 `direct_by_single_same_coat`、`needs_identity_confirmation`、`unregistered_source`。
+
+身份时间线和事件限频都按 `source_id` 隔离。即使 A 客户和 B 客户的猫同名、同花色，也不会互相复用历史身份或互相吞掉事件。
+
+### 0.1.4 数据库存储建议
+
+数据库建议保存长期关系，字段可以按以下结构设计：
+
+```text
+users
+  user_id
+  status
+  created_at
+  updated_at
+
+households
+  household_id
+  user_id
+  name
+  status
+  created_at
+  updated_at
+
+cameras
+  camera_id
+  household_id
+  stream_url
+  status
+  config_version
+  updated_at
+
+cats
+  cat_id
+  household_id
+  cat_name
+  coat_class
+  status
+  updated_at
+
+worker_assignments
+  worker_id
+  camera_id
+  assigned_at
+  config_version
+```
+
+推荐索引：
+
+```sql
+CREATE UNIQUE INDEX idx_cameras_camera_id ON cameras(camera_id);
+CREATE INDEX idx_cameras_household_id ON cameras(household_id);
+CREATE INDEX idx_cats_household_id ON cats(household_id);
+CREATE INDEX idx_worker_assignments_worker_id ON worker_assignments(worker_id);
+CREATE UNIQUE INDEX idx_worker_assignments_worker_camera ON worker_assignments(worker_id, camera_id);
+```
+
+`stream_url` 建议加密存储，或由流媒体/鉴权服务在 worker 启动和刷新配置时临时签发。下游事件、日志和诊断文件不应暴露原始视频流地址。
+
+### 0.1.5 数据库性能边界
+
+数据库不应参与逐帧推理热路径。正确方式是：
+
+```text
+worker 启动
+  -> 按 worker_id 从数据库或配置服务拉取小快照
+  -> 构建内存字典
+  -> 推理过程中只查内存
+```
+
+推理热路径只做内存查询：
+
+```text
+source_id -> household registry
+coat_class -> candidate cats
+```
+
+数据库访问只发生在：
+
+- worker 启动加载配置。
+- 定时刷新配置，例如 30 秒或 60 秒一次。
+- 收到配置变更通知后增量刷新。
+- worker 异常重启后重新拉取快照。
+
+因此数据库规模可以按万级客户设计，但每个推理进程内存中只持有自己负责的几十路摄像头数据。只要不在每帧中查库，数据库不会影响推理性能。
+
 ## 1. 项目目标
 
 正式项目的目标是把当前原型脚本整理成稳定、可维护、可评估的推理系统：

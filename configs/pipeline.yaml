@@ -12,17 +12,48 @@ coat:
   min_area: 16384
   confidence: 0.0
 
+worker:
+  # Production workers should receive only their assigned camera/source ids from
+  # the scheduler or a generated local snapshot. Empty means run all configured
+  # sources in this file.
+  source_ids: []
+
+sources: []
+# Worker-local source snapshot example. Keep stream_url out of identity keys:
+# sources:
+#   - source_id: cam_customer_a_01
+#     stream_url: rtsp://customer-a.example/live
+#   - source_id: cam_customer_b_01
+#     stream_url: rtsp://customer-b.example/live
+
 identity:
-  # If exactly one registered cat has the predicted coat_class, identity is confirmed directly.
+  # If exactly one registered cat in the source household has the predicted coat_class,
+  # identity is confirmed directly.
   direct_when_single_same_coat: true
   unknown_name: unknown
+  # Backward-compatible default household. Used when no source-specific household matches.
   cats: []
-  # Example:
+  # Single-household example:
   # cats:
   #   - name: ragdoll
   #     coat_class: mixed_white_ragdoll
   #   - name: silver_pure
   #     coat_class: silver_gray_white
+  # Multi-customer example. Identity routing uses stable source_id/camera_id,
+  # not the raw stream_url.
+  # households:
+  #   - household_id: customer_a_home
+  #     source_ids:
+  #       - cam_customer_a_01
+  #     cats:
+  #       - name: customer_a_blue
+  #         coat_class: blue_cat
+  #   - household_id: customer_b_home
+  #     source_ids:
+  #       - cam_customer_b_01
+  #     cats:
+  #       - name: customer_b_blue
+  #         coat_class: blue_cat
 
 events:
   # When eating identity cannot be confirmed in the current frame, reuse a recent

@@ -5,7 +5,15 @@ import sys
 from pathlib import Path
 
 from .config import PROJECT_ROOT, load_yaml
+from .media import source_id_list
 from .pipeline import RealtimePipeline
+
+
+def parse_source_ids(values: list[str] | None) -> tuple[str, ...]:
+    source_ids: list[str] = []
+    for value in values or []:
+        source_ids.extend(source_id_list(value))
+    return tuple(source_ids)
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,8 +25,17 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--source",
-        required=True,
+        default=None,
         help="Video file, video directory, camera index such as 0, or RTSP/HTTP stream URL.",
+    )
+    parser.add_argument(
+        "--source-id",
+        action="append",
+        default=[],
+        help=(
+            "Stable configured source_id/camera_id to run. Can be repeated or comma-separated. "
+            "When paired with --source, tags that raw single source with this stable id."
+        ),
     )
     parser.add_argument(
         "--models-config",
@@ -56,7 +73,23 @@ def main() -> int:
         device=args.device,
         show=args.show,
     )
-    pipeline.run_source(args.source, vid_stride=args.vid_stride, max_frames=args.max_frames)
+    source_ids = parse_source_ids(args.source_id)
+    if args.source and len(source_ids) > 1:
+        print("--source can only be paired with at most one --source-id", file=sys.stderr)
+        return 2
+    if args.source:
+        pipeline.run_source(
+            args.source,
+            source_id=source_ids[0] if source_ids else None,
+            vid_stride=args.vid_stride,
+            max_frames=args.max_frames,
+        )
+    else:
+        pipeline.run_configured_sources(
+            source_ids=source_ids or None,
+            vid_stride=args.vid_stride,
+            max_frames=args.max_frames,
+        )
     print(f"Announcement JSONL: {output_dir / 'announcement_events.jsonl'}")
     print(f"Announcement CSV: {output_dir / 'announcement_events.csv'}")
     return 0
@@ -64,4 +97,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

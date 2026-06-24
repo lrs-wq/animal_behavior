@@ -17,6 +17,7 @@ class AnnouncementEvent:
     coat_class: str
     confidence: float
     message_key: str
+    household_id: str = ""
     details: dict[str, Any] = field(default_factory=dict)
     created_at_unix: float = field(default_factory=time.time)
 
@@ -43,6 +44,7 @@ class AnnouncementRecorder:
             "coat_class",
             "confidence",
             "message_key",
+            "household_id",
             "details_json",
             "created_at_unix",
         ]
@@ -58,12 +60,11 @@ class AnnouncementRecorder:
 
 class EventThrottler:
     def __init__(self) -> None:
-        self.last_event_time: dict[tuple[str, str], float] = {}
+        self.last_event_time: dict[tuple[str, ...], float] = {}
 
-    def allow(self, key: tuple[str, str], timestamp_seconds: float, interval_seconds: float) -> bool:
+    def allow(self, key: tuple[str, ...], timestamp_seconds: float, interval_seconds: float) -> bool:
         last = self.last_event_time.get(key)
         if last is not None and timestamp_seconds - last < interval_seconds:
             return False
         self.last_event_time[key] = timestamp_seconds
         return True
-

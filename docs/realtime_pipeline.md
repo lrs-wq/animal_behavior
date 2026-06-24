@@ -72,4 +72,48 @@ identity:
       coat_class: silver_gray_white
 ```
 
+单进程处理多个客户时，运行时通过稳定 `source_id` / `camera_id` 区分家庭，视频流地址只用于拉流：
+
+```yaml
+worker:
+  source_ids:
+    - cam_customer_a_01
+    - cam_customer_b_01
+
+sources:
+  - source_id: cam_customer_a_01
+    stream_url: rtsp://customer-a.example/live
+  - source_id: cam_customer_b_01
+    stream_url: rtsp://customer-b.example/live
+
+identity:
+  households:
+    - household_id: customer_a_home
+      source_ids:
+        - cam_customer_a_01
+      cats:
+        - name: 小蓝
+          coat_class: blue_cat
+    - household_id: customer_b_home
+      source_ids:
+        - cam_customer_b_01
+      cats:
+        - name: 小蓝
+          coat_class: blue_cat
+```
+
+万级客户规模下，全量客户、家庭、猫咪和摄像头关系应存放在中心数据库。推理 worker 启动时只加载调度系统分配给它的本地快照，一般是 20 路以上 `source_id` 对应的数据。每帧会按运行时 `source_id` 精确查找家庭注册表。即使两个客户都有同名猫或相同 `coat_class`，身份判断、身份时间线和事件限频也只在各自 `source_id` 内生效。事件顶层的 `source` 字段输出稳定 `source_id`，另有 `household_id` 便于下游直接按客户家庭聚合。未匹配到家庭且没有默认 `identity.cats` 时，内部身份方法标记为 `unregistered_source`，对外 `cat_name` 留空。
+
+兼容调试命令：
+
+```powershell
+python -m eating_behavior.main --source rtsp://debug.example/live --source-id cam_debug_01
+```
+
+生产快照命令：
+
+```powershell
+python -m eating_behavior.main --pipeline-config configs/pipeline.yaml
+```
+
 如果 `silver_gray_white` 有多只猫，系统不会只凭毛色确认，内部会标记 `needs_identity_confirmation`，事件输出的 `cat_name` 留空，等待 ReID 分支接入。
