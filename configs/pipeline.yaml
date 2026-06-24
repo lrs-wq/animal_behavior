@@ -1,0 +1,38 @@
+detection:
+  confidence: 0.25
+  iou: 0.70
+  imgsz: 640
+  cat_classes:
+    - cat
+  feeding_classes:
+    - feeding_head
+
+coat:
+  imgsz: 128
+  min_area: 16384
+  confidence: 0.0
+
+identity:
+  # If exactly one registered cat has the predicted coat_class, identity is confirmed directly.
+  direct_when_single_same_coat: true
+  unknown_name: unknown
+  cats: []
+  # Example:
+  # cats:
+  #   - name: ragdoll
+  #     coat_class: mixed_white_ragdoll
+  #   - name: silver_pure
+  #     coat_class: silver_gray_white
+
+events:
+  # When eating identity cannot be confirmed in the current frame, reuse a recent
+  # confirmed passing identity from the same source and same coat class.
+  identity_history_seconds: 8.0
+  pass_event_interval_seconds: 5.0
+  eating_event_interval_seconds: 2.0
+  bowl_monitor_interval_seconds: 30.0
+
+output:
+  save_event_jsonl: true
+  save_event_csv: true
+  save_frames: false

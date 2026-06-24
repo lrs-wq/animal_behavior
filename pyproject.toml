@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eating-behavior-formal"
+version = "0.1.0"
+description = "Realtime cat detection, coat routing, identity confirmation, and eating event inference."
+requires-python = ">=3.10"
+dependencies = [
+  "ultralytics>=8.4.58",
+  "opencv-python>=4.13.0",
+  "numpy",
+  "pyyaml",
+]
+
+[project.scripts]
+eating-behavior = "eating_behavior.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

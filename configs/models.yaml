@@ -1,0 +1,6 @@
+detection_model: D:/gogelila/Eating_behavior/yolo/runs/detect/cat-head-feeding-yolo/v9s_auto_np/weights/best.pt
+coat_classifier_model: D:/gogelila/Eating_behavior/yolo/runs_cls/cls_v2_yolo26n_200e_128_auto_batch/weights/best.pt
+identity_gallery:
+feature_backend:
+feature_model:
+
