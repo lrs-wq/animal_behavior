@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from .config import PROJECT_ROOT, load_yaml
-from .media import source_id_list
+from .media import is_network_source, source_id_list
 from .pipeline import RealtimePipeline
 
 
@@ -71,6 +71,17 @@ def main() -> int:
     if args.vid_stride < 1:
         print("--vid-stride must be >= 1", file=sys.stderr)
         return 2
+    try:
+        source_ids = parse_source_ids(args.source_id)
+    except (TypeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.source and len(source_ids) > 1:
+        print("--source can only be paired with at most one --source-id", file=sys.stderr)
+        return 2
+    if args.source and is_network_source(args.source) and not source_ids:
+        print("Network stream --source requires an explicit stable --source-id", file=sys.stderr)
+        return 2
     models_config = load_yaml(args.models_config)
     pipeline_config = load_yaml(args.pipeline_config)
     output_dir = Path(args.output_dir)
@@ -83,10 +94,6 @@ def main() -> int:
         device=args.device,
         show=args.show,
     )
-    source_ids = parse_source_ids(args.source_id)
-    if args.source and len(source_ids) > 1:
-        print("--source can only be paired with at most one --source-id", file=sys.stderr)
-        return 2
     if args.source:
         # Debug mode: bind a raw source URI to one stable source_id.
         pipeline.run_source(

@@ -12,6 +12,22 @@ from typing import Any
 
 import numpy as np
 
+from .config import config_bool
+from .media import normalize_source_id
+
+
+def normalized_confidence(value: float | None, *, default: float) -> float:
+    """Clamp a finite confidence to [0, 1], rejecting invalid model values."""
+    if value is None:
+        return default
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not np.isfinite(confidence):
+        return 0.0
+    return max(0.0, min(1.0, confidence))
+
 
 @dataclass(frozen=True)
 class CatProfile:
@@ -53,12 +69,20 @@ class HouseholdRegistry:
         # kept as a backward-compatible alias for older code/config.
         self.source_ids = tuple(normalize_source_key(source_id) for source_id in (source_ids or ()))
         self.sources = self.source_ids
-        # Ignore incomplete cat entries so bad config does not enter hot paths.
-        self.cats = [
-            CatProfile(name=str(item["name"]), coat_class=str(item["coat_class"]))
-            for item in cats
-            if item.get("name") and item.get("coat_class")
-        ]
+        profiles: list[CatProfile] = []
+        seen_names: set[str] = set()
+        for item in cats:
+            if not isinstance(item, dict):
+                raise ValueError("identity cats must contain mappings")
+            name = str(item.get("name") or "").strip()
+            coat_class = str(item.get("coat_class") or "").strip()
+            if not name or not coat_class:
+                raise ValueError("identity cat entries require name and coat_class")
+            if name in seen_names:
+                raise ValueError(f"Duplicate cat name in household: {name}")
+            seen_names.add(name)
+            profiles.append(CatProfile(name=name, coat_class=coat_class))
+        self.cats = profiles
 
     def candidates_for_coat(self, coat_class: str) -> list[CatProfile]:
         """Return cats in this household with the predicted coat_class."""
@@ -81,7 +105,13 @@ class IdentityService:
         self.registry = registry
         self.direct_when_single_same_coat = direct_when_single_same_coat
 
-    def decide(self, coat_class: str, crop: np.ndarray | None = None) -> IdentityDecision:
+    def decide(
+        self,
+        coat_class: str,
+        crop: np.ndarray | None = None,
+        *,
+        evidence_confidence: float | None = None,
+    ) -> IdentityDecision:
         """Decide identity from a household registry and a coat prediction."""
         candidates = self.registry.candidates_for_coat(coat_class)
         candidate_names = tuple(cat.name for cat in candidates)
@@ -90,8 +120,20 @@ class IdentityService:
             return IdentityDecision(
                 cat_name=candidates[0].name,
                 method="direct_by_single_same_coat",
-                confidence=1.0,
+                confidence=normalized_confidence(evidence_confidence, default=1.0),
                 reason="only_one_registered_cat_has_this_coat",
+                candidates=candidate_names,
+                household_id=self.registry.household_id,
+            )
+        if len(candidates) == 1:
+            # The operator explicitly disabled coat-only confirmation. Preserve
+            # the candidate for a future Re-ID stage instead of incorrectly
+            # reporting that the coat is unregistered.
+            return IdentityDecision(
+                cat_name=self.registry.unknown_name,
+                method="needs_identity_confirmation",
+                confidence=0.0,
+                reason="direct_single_same_coat_confirmation_disabled",
                 candidates=candidate_names,
                 household_id=self.registry.household_id,
             )
@@ -118,7 +160,7 @@ class IdentityService:
 
 def normalize_source_key(source: str) -> str:
     """Normalize source_id/camera_id strings used as dictionary keys."""
-    return str(source).strip()
+    return normalize_source_id(source)
 
 
 def source_list(value: Any) -> tuple[str, ...]:
@@ -129,7 +171,8 @@ def source_list(value: Any) -> tuple[str, ...]:
     if value is None:
         return ()
     if isinstance(value, str):
-        return tuple(item.strip() for item in value.split(",") if item.strip())
+        normalized = (normalize_source_key(item) for item in value.split(","))
+        return tuple(item for item in normalized if item)
     if isinstance(value, (list, tuple, set)):
         return tuple(normalize_source_key(item) for item in value if str(item).strip())
     raise TypeError(f"source must be a string or a list of strings, got {type(value).__name__}")
@@ -143,6 +186,7 @@ class SourceIdentityService:
         default_registry: HouseholdRegistry,
         registries_by_source: dict[str, HouseholdRegistry] | None = None,
         direct_when_single_same_coat: bool = True,
+        allow_default_fallback: bool | None = None,
     ) -> None:
         self.default_registry = default_registry
         self.default_service = IdentityService(default_registry, direct_when_single_same_coat)
@@ -156,27 +200,49 @@ class SourceIdentityService:
                 raise ValueError(f"Duplicate identity source mapping: {source_key}")
             # One source_id must map to exactly one household.
             self.services_by_source[source_key] = IdentityService(registry, direct_when_single_same_coat)
+        # A routing table represents a multi-household boundary, so unknown
+        # sources fail closed unless fallback was explicitly enabled.
+        self.allow_default_fallback = (
+            not bool(self.services_by_source) if allow_default_fallback is None else allow_default_fallback
+        )
 
     @classmethod
     def from_config(cls, identity_config: dict[str, Any]) -> "SourceIdentityService":
         """Build source_id -> household identity services from config."""
-        direct_when_single_same_coat = bool(identity_config.get("direct_when_single_same_coat", True))
+        direct_when_single_same_coat = config_bool(
+            identity_config.get("direct_when_single_same_coat", True),
+            field_name="identity.direct_when_single_same_coat",
+        )
         default_unknown_name = str(identity_config.get("unknown_name", "unknown"))
+        default_cats = identity_config.get("cats") or []
+        if not isinstance(default_cats, list):
+            raise ValueError("identity.cats must be a list of mappings")
         default_registry = HouseholdRegistry(
-            cats=list(identity_config.get("cats") or []),
+            cats=default_cats,
             unknown_name=default_unknown_name,
             household_id=str(identity_config.get("household_id", "default")),
         )
         registries_by_source: dict[str, HouseholdRegistry] = {}
-        for household in list(identity_config.get("households") or []):
+        households_value = identity_config.get("households") or []
+        if not isinstance(households_value, list):
+            raise ValueError("identity.households must be a list of mappings")
+        households = list(households_value)
+        fallback_value = identity_config.get("allow_default_fallback", not bool(households))
+        if not isinstance(fallback_value, bool):
+            raise ValueError("identity.allow_default_fallback must be a boolean")
+        seen_household_ids: set[str] = set()
+        for household_index, household in enumerate(households, start=1):
             if not isinstance(household, dict):
                 raise ValueError("identity.households items must be mappings")
             household_id = str(
                 household.get("household_id")
                 or household.get("id")
                 or household.get("name")
-                or f"household_{len(registries_by_source) + 1}"
-            )
+                or f"household_{household_index}"
+            ).strip()
+            if household_id in seen_household_ids:
+                raise ValueError(f"Duplicate identity household_id: {household_id}")
+            seen_household_ids.add(household_id)
             sources = source_list(
                 household.get(
                     "source_ids",
@@ -187,8 +253,13 @@ class SourceIdentityService:
                     ),
                 )
             )
+            household_cats = household.get("cats") or []
+            if not isinstance(household_cats, list):
+                raise ValueError(
+                    f"identity household cats must be a list: {household_id}"
+                )
             registry = HouseholdRegistry(
-                cats=list(household.get("cats") or []),
+                cats=household_cats,
                 unknown_name=str(household.get("unknown_name", default_unknown_name)),
                 household_id=household_id,
                 source_ids=list(sources),
@@ -201,24 +272,71 @@ class SourceIdentityService:
             default_registry=default_registry,
             registries_by_source=registries_by_source,
             direct_when_single_same_coat=direct_when_single_same_coat,
+            allow_default_fallback=fallback_value,
         )
 
-    def decide(self, source: str, coat_class: str, crop: np.ndarray | None = None) -> IdentityDecision:
+    def decide(
+        self,
+        source: str,
+        coat_class: str,
+        crop: np.ndarray | None = None,
+        *,
+        evidence_confidence: float | None = None,
+    ) -> IdentityDecision:
         """Select household by source_id, then decide identity inside it."""
         source_key = normalize_source_key(source)
         service = self.services_by_source.get(source_key)
         if service is not None:
-            return service.decide(coat_class, crop)
-        if self.default_registry.cats:
+            return service.decide(
+                coat_class,
+                crop,
+                evidence_confidence=evidence_confidence,
+            )
+        if self.allow_default_fallback and self.default_registry.cats:
             # Default household keeps single-customer/debug configs working.
-            return self.default_service.decide(coat_class, crop)
+            return self.default_service.decide(
+                coat_class,
+                crop,
+                evidence_confidence=evidence_confidence,
+            )
         return IdentityDecision(
             cat_name=self.default_registry.unknown_name,
             method="unregistered_source",
             confidence=0.0,
             reason="no_household_registered_for_source",
             candidates=(),
-            household_id=self.default_registry.household_id,
+            household_id="",
+        )
+
+    def reject(
+        self,
+        source: str,
+        *,
+        method: str,
+        reason: str,
+        candidates: tuple[str, ...] = (),
+    ) -> IdentityDecision:
+        """Return an explicitly unconfirmed decision in the routed household."""
+        source_key = normalize_source_key(source)
+        service = self.services_by_source.get(source_key)
+        if service is None and self.allow_default_fallback and self.default_registry.cats:
+            service = self.default_service
+        if service is None:
+            return IdentityDecision(
+                cat_name=self.default_registry.unknown_name,
+                method="unregistered_source",
+                confidence=0.0,
+                reason="no_household_registered_for_source",
+                candidates=(),
+                household_id="",
+            )
+        return IdentityDecision(
+            cat_name=service.registry.unknown_name,
+            method=method,
+            confidence=0.0,
+            reason=reason,
+            candidates=candidates,
+            household_id=service.registry.household_id,
         )
 
     def household_id_for_source(self, source: str) -> str:
@@ -227,6 +345,21 @@ class SourceIdentityService:
         service = self.services_by_source.get(source_key)
         if service is not None:
             return service.registry.household_id
-        if self.default_registry.cats:
+        if self.allow_default_fallback and self.default_registry.cats:
             return self.default_registry.household_id
         return ""
+
+    def validate_configured_sources(self, source_ids: list[str] | tuple[str, ...]) -> None:
+        """Require every configured source to cross a strict household boundary."""
+        if not self.services_by_source or self.allow_default_fallback:
+            return
+        missing = [
+            normalize_source_key(source_id)
+            for source_id in source_ids
+            if normalize_source_key(source_id) not in self.services_by_source
+        ]
+        if missing:
+            raise ValueError(
+                "Configured source_id has no household identity mapping: "
+                + ", ".join(missing)
+            )

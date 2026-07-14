@@ -7,16 +7,34 @@ in-memory configuration.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
+from .association import FeedingAssociation, associate_feeding_to_cat
+from .config import config_bool, config_float, config_int, config_mapping
+from .eating_state import (
+    CompletedEatingEvent,
+    EatingFrameObservation,
+    EatingStateConfig,
+    EatingStateMachine,
+    IdentityVote,
+)
 from .events import AnnouncementEvent, AnnouncementRecorder, EventThrottler
 from .identity import IdentityDecision, SourceIdentityService
-from .media import SourceSpec, configured_source_specs, iter_frames, resolve_source_specs, source_id_list
+from .media import (
+    SourceSpec,
+    configured_source_specs,
+    is_stream_source,
+    iter_frames,
+    resolve_source_specs,
+    source_id_list,
+)
 from .models import CatDetector, CoatClassifier, CoatPrediction, Detection
 
 
@@ -32,6 +50,46 @@ class PipelineConfig:
     eating_event_interval_seconds: float
     bowl_monitor_interval_seconds: float
     worker_source_ids: tuple[str, ...] = ()
+    require_worker_assignments: bool = False
+    allow_debug_source: bool = True
+    coat_min_confidence: float = 0.55
+    coat_min_margin: float = 0.05
+    feeding_association_max_distance_ratio: float = 0.5
+    feeding_association_ambiguity_margin: float = 0.1
+    eating_state: EatingStateConfig = field(default_factory=EatingStateConfig)
+    emit_bowl_placeholder: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject unsafe or nonsensical hot-path configuration values."""
+        if self.require_worker_assignments and self.allow_debug_source:
+            raise ValueError(
+                "worker.allow_debug_source must be false when worker.require_assignments is enabled"
+            )
+        if self.coat_min_area < 0:
+            raise ValueError("coat.min_area must be >= 0")
+        for field_name, value in (
+            ("coat.confidence", self.coat_min_confidence),
+            ("coat.min_margin", self.coat_min_margin),
+        ):
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"{field_name} must be between 0 and 1")
+        for field_name, value in (
+            (
+                "association.max_distance_ratio",
+                self.feeding_association_max_distance_ratio,
+            ),
+            ("association.ambiguity_margin", self.feeding_association_ambiguity_margin),
+        ):
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{field_name} must be a finite value >= 0")
+        for field_name, value in (
+            ("events.identity_history_seconds", self.identity_history_seconds),
+            ("events.pass_event_interval_seconds", self.pass_event_interval_seconds),
+            ("events.eating_event_interval_seconds", self.eating_event_interval_seconds),
+            ("events.bowl_monitor_interval_seconds", self.bowl_monitor_interval_seconds),
+        ):
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{field_name} must be a finite value >= 0")
 
 
 @dataclass(frozen=True)
@@ -111,10 +169,29 @@ class IdentityTimeline:
             ),
         )
 
+    def clear_source(self, source: str) -> None:
+        """Drop observations before a new media-time session starts."""
+        self.observations = [
+            observation
+            for observation in self.observations
+            if observation.source != source
+        ]
+
 
 def normalize_class_set(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> set[str]:
     """Normalize configured class names/IDs to lowercase strings."""
     return {str(value).lower() for value in (values or [])}
+
+
+def bounded_confidence(value: float) -> float:
+    """Return a finite probability suitable for state and event aggregation."""
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(confidence):
+        return 0.0
+    return max(0.0, min(1.0, confidence))
 
 
 def crop_frame(frame: np.ndarray, xyxy: tuple[int, int, int, int]) -> np.ndarray:
@@ -128,44 +205,48 @@ def is_named_class(detection: Detection, names: set[str]) -> bool:
     return detection.class_name.lower() in names or str(detection.class_id) in names
 
 
+def coat_prediction_rejection(
+    coat: CoatPrediction,
+    *,
+    min_confidence: float,
+    min_margin: float,
+) -> tuple[str, str] | None:
+    """Return a stable rejection method/reason, or None for accepted evidence."""
+    if coat.class_name.strip().lower() in {"", "unknown", "none", "null"}:
+        return "invalid_coat_prediction", "coat_classifier_returned_unknown"
+    if (
+        not math.isfinite(coat.confidence)
+        or not math.isfinite(coat.second_confidence)
+        or not 0.0 <= coat.confidence <= 1.0
+        or not 0.0 <= coat.second_confidence <= 1.0
+    ):
+        return "invalid_coat_prediction", "coat_classifier_returned_invalid_confidence"
+    if coat.confidence < min_confidence:
+        return "low_coat_confidence", "coat_confidence_below_threshold"
+    if coat.confidence - coat.second_confidence < min_margin:
+        return "ambiguous_coat_prediction", "coat_top1_top2_margin_below_threshold"
+    return None
+
+
 def event_cat_name(identity: IdentityDecision | None) -> str:
     """Convert an internal identity decision to public event cat_name."""
     if identity is None:
         return ""
     cat_name = (identity.cat_name or "").strip()
-    unknown_methods = {"needs_identity_confirmation", "unregistered_coat", "unregistered_source", "unassociated"}
+    unknown_methods = {
+        "needs_identity_confirmation",
+        "unregistered_coat",
+        "unregistered_source",
+        "unassociated",
+        "insufficient_coat_crop",
+        "invalid_coat_prediction",
+        "low_coat_confidence",
+        "ambiguous_coat_prediction",
+    }
     unknown_names = {"unknown", "unidentified", "none", "null"}
     if not cat_name or identity.method in unknown_methods or cat_name.lower() in unknown_names:
         return ""
     return cat_name
-
-
-def associate_feeding_to_cat(
-    feeding: Detection,
-    cat_decisions: list[tuple[Detection, CoatPrediction, IdentityDecision]],
-) -> tuple[CoatPrediction | None, IdentityDecision | None]:
-    """Associate a feeding_head detection with the most likely cat box."""
-    if not cat_decisions:
-        return None, None
-    fx1, fy1, fx2, fy2 = feeding.xyxy
-    fc_x = (fx1 + fx2) / 2
-    fc_y = (fy1 + fy2) / 2
-    best: tuple[float, CoatPrediction, IdentityDecision] | None = None
-    for cat_det, coat, identity in cat_decisions:
-        x1, y1, x2, y2 = cat_det.xyxy
-        inside = x1 <= fc_x <= x2 and y1 <= fc_y <= y2
-        distance = 0.0 if inside else min(
-            abs(fc_x - x1),
-            abs(fc_x - x2),
-            abs(fc_y - y1),
-            abs(fc_y - y2),
-        )
-        score = -distance + (10000.0 if inside else 0.0)
-        if best is None or score > best[0]:
-            best = (score, coat, identity)
-    if best is None:
-        return None, None
-    return best[1], best[2]
 
 
 class RealtimePipeline:
@@ -190,6 +271,9 @@ class RealtimePipeline:
         self.show = show
         self.throttler = EventThrottler()
         self.identity_timeline = IdentityTimeline()
+        self.eating_machines: dict[str, EatingStateMachine] = {}
+        self.source_session_sequences: dict[str, int] = {}
+        self.run_session_id = uuid.uuid4().hex
 
     @classmethod
     def from_configs(
@@ -201,42 +285,211 @@ class RealtimePipeline:
         show: bool = False,
     ) -> "RealtimePipeline":
         """Construct the pipeline from model and runtime configuration."""
-        detection_cfg = pipeline_config.get("detection", {})
-        coat_cfg = pipeline_config.get("coat", {})
-        identity_cfg = pipeline_config.get("identity", {})
-        events_cfg = pipeline_config.get("events", {})
-        worker_cfg = pipeline_config.get("worker", {})
+        detection_cfg = config_mapping(
+            pipeline_config.get("detection", {}),
+            field_name="detection",
+        )
+        coat_cfg = config_mapping(
+            pipeline_config.get("coat", {}),
+            field_name="coat",
+        )
+        association_cfg = config_mapping(
+            pipeline_config.get("association", {}),
+            field_name="association",
+        )
+        identity_cfg = config_mapping(
+            pipeline_config.get("identity", {}),
+            field_name="identity",
+        )
+        events_cfg = config_mapping(
+            pipeline_config.get("events", {}),
+            field_name="events",
+        )
+        output_cfg = config_mapping(
+            pipeline_config.get("output", {}),
+            field_name="output",
+        )
+        worker_cfg = config_mapping(
+            pipeline_config.get("worker", {}),
+            field_name="worker",
+        )
         sources_cfg = pipeline_config.get("sources", pipeline_config.get("camera_sources", []))
+        model_security_cfg = config_mapping(
+            models_config.get("security", {}),
+            field_name="models.security",
+        )
+        require_model_sha256 = config_bool(
+            model_security_cfg.get("require_sha256", True),
+            field_name="models.security.require_sha256",
+        )
+        allow_pickle_weights = config_bool(
+            model_security_cfg.get("allow_pickle_weights", False),
+            field_name="models.security.allow_pickle_weights",
+        )
+        allowed_model_roots = model_security_cfg.get("allowed_roots")
+        detection_sha256 = models_config.get("detection_model_sha256")
+        coat_sha256 = models_config.get("coat_classifier_model_sha256")
+        if require_model_sha256 and (not detection_sha256 or not coat_sha256):
+            raise ValueError(
+                "Both detection_model_sha256 and coat_classifier_model_sha256 are required"
+            )
+        detection_confidence = config_float(
+            detection_cfg.get("confidence", 0.25),
+            field_name="detection.confidence",
+        )
+        detection_iou = config_float(
+            detection_cfg.get("iou", 0.70),
+            field_name="detection.iou",
+        )
+        detection_imgsz = config_int(
+            detection_cfg.get("imgsz", 640),
+            field_name="detection.imgsz",
+        )
+        coat_imgsz = config_int(
+            coat_cfg.get("imgsz", 128),
+            field_name="coat.imgsz",
+        )
+        for field_name, value in (
+            ("detection.confidence", detection_confidence),
+            ("detection.iou", detection_iou),
+        ):
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{field_name} must be between 0 and 1")
+        if detection_imgsz <= 0:
+            raise ValueError("detection.imgsz must be > 0")
+        if coat_imgsz <= 0:
+            raise ValueError("coat.imgsz must be > 0")
 
         detector = CatDetector(
             models_config["detection_model"],
-            confidence=float(detection_cfg.get("confidence", 0.25)),
-            iou=float(detection_cfg.get("iou", 0.70)),
-            imgsz=int(detection_cfg.get("imgsz", 640)),
+            confidence=detection_confidence,
+            iou=detection_iou,
+            imgsz=detection_imgsz,
             device=device,
+            allowed_roots=allowed_model_roots,
+            expected_sha256=str(detection_sha256) if detection_sha256 else None,
+            allow_pickle_weights=allow_pickle_weights,
         )
         coat_classifier = CoatClassifier(
             models_config["coat_classifier_model"],
-            imgsz=int(coat_cfg.get("imgsz", 128)),
+            imgsz=coat_imgsz,
             device=device,
+            allowed_roots=allowed_model_roots,
+            expected_sha256=str(coat_sha256) if coat_sha256 else None,
+            allow_pickle_weights=allow_pickle_weights,
         )
         identity_service = SourceIdentityService.from_config(identity_cfg)
         # Worker-local source snapshot: stable source_id plus real video URI.
         source_specs = configured_source_specs(sources_cfg)
+        identity_service.validate_configured_sources(
+            tuple(spec.source_id for spec in source_specs)
+        )
+        if config_bool(
+            output_cfg.get("save_frames", False),
+            field_name="output.save_frames",
+        ):
+            raise ValueError("output.save_frames is not implemented")
         return cls(
             detector=detector,
             coat_classifier=coat_classifier,
             identity_service=identity_service,
-            recorder=AnnouncementRecorder(output_dir),
+            recorder=AnnouncementRecorder(
+                output_dir,
+                save_jsonl=config_bool(
+                    output_cfg.get("save_event_jsonl", True),
+                    field_name="output.save_event_jsonl",
+                ),
+                save_csv=config_bool(
+                    output_cfg.get("save_event_csv", True),
+                    field_name="output.save_event_csv",
+                ),
+                max_recent_events=config_int(
+                    output_cfg.get("max_recent_events", 1000),
+                    field_name="output.max_recent_events",
+                ),
+            ),
             config=PipelineConfig(
                 cat_classes=normalize_class_set(detection_cfg.get("cat_classes", ["cat"])),
                 feeding_classes=normalize_class_set(detection_cfg.get("feeding_classes", ["feeding_head"])),
-                coat_min_area=int(coat_cfg.get("min_area", 128 * 128)),
-                identity_history_seconds=float(events_cfg.get("identity_history_seconds", 8.0)),
-                pass_event_interval_seconds=float(events_cfg.get("pass_event_interval_seconds", 5.0)),
-                eating_event_interval_seconds=float(events_cfg.get("eating_event_interval_seconds", 2.0)),
-                bowl_monitor_interval_seconds=float(events_cfg.get("bowl_monitor_interval_seconds", 30.0)),
+                coat_min_area=config_int(
+                    coat_cfg.get("min_area", 128 * 128),
+                    field_name="coat.min_area",
+                ),
+                identity_history_seconds=config_float(
+                    events_cfg.get("identity_history_seconds", 8.0),
+                    field_name="events.identity_history_seconds",
+                ),
+                pass_event_interval_seconds=config_float(
+                    events_cfg.get("pass_event_interval_seconds", 5.0),
+                    field_name="events.pass_event_interval_seconds",
+                ),
+                eating_event_interval_seconds=config_float(
+                    events_cfg.get("eating_event_interval_seconds", 2.0),
+                    field_name="events.eating_event_interval_seconds",
+                ),
+                bowl_monitor_interval_seconds=config_float(
+                    events_cfg.get("bowl_monitor_interval_seconds", 30.0),
+                    field_name="events.bowl_monitor_interval_seconds",
+                ),
                 worker_source_ids=source_id_list(worker_cfg.get("source_ids", worker_cfg.get("camera_ids"))),
+                require_worker_assignments=config_bool(
+                    worker_cfg.get("require_assignments", False),
+                    field_name="worker.require_assignments",
+                ),
+                allow_debug_source=config_bool(
+                    worker_cfg.get("allow_debug_source", True),
+                    field_name="worker.allow_debug_source",
+                ),
+                coat_min_confidence=config_float(
+                    coat_cfg.get("confidence", 0.55),
+                    field_name="coat.confidence",
+                ),
+                coat_min_margin=config_float(
+                    coat_cfg.get("min_margin", 0.05),
+                    field_name="coat.min_margin",
+                ),
+                feeding_association_max_distance_ratio=config_float(
+                    association_cfg.get("max_distance_ratio", 0.5),
+                    field_name="association.max_distance_ratio",
+                ),
+                feeding_association_ambiguity_margin=config_float(
+                    association_cfg.get("ambiguity_margin", 0.1),
+                    field_name="association.ambiguity_margin",
+                ),
+                eating_state=EatingStateConfig(
+                    enter_seconds=config_float(
+                        events_cfg.get("enter_seconds", 2.0),
+                        field_name="events.enter_seconds",
+                    ),
+                    exit_seconds=config_float(
+                        events_cfg.get("exit_seconds", 5.0),
+                        field_name="events.exit_seconds",
+                    ),
+                    merge_gap_seconds=config_float(
+                        events_cfg.get("merge_gap_seconds", 10.0),
+                        field_name="events.merge_gap_seconds",
+                    ),
+                    min_event_seconds=config_float(
+                        events_cfg.get("min_event_seconds", 2.0),
+                        field_name="events.min_event_seconds",
+                    ),
+                    event_confirm_ratio=config_float(
+                        events_cfg.get("event_confirm_ratio", 0.60),
+                        field_name="events.event_confirm_ratio",
+                    ),
+                    min_identity_observations=config_int(
+                        events_cfg.get("min_identity_observations", 2),
+                        field_name="events.min_identity_observations",
+                    ),
+                    max_identity_candidates=config_int(
+                        events_cfg.get("max_identity_candidates", 32),
+                        field_name="events.max_identity_candidates",
+                    ),
+                ),
+                emit_bowl_placeholder=config_bool(
+                    events_cfg.get("emit_bowl_placeholder", False),
+                    field_name="events.emit_bowl_placeholder",
+                ),
             ),
             source_specs=source_specs,
             show=show,
@@ -248,7 +501,17 @@ class RealtimePipeline:
 
     def select_source_specs(self, source_ids: tuple[str, ...] | list[str] | set[str] | None = None) -> list[SourceSpec]:
         """Select source specs from explicit IDs or worker_source_ids."""
-        selected_ids = source_id_list(source_ids) if source_ids is not None else self.config.worker_source_ids
+        assigned_ids = self.config.worker_source_ids
+        if self.config.require_worker_assignments and not assigned_ids:
+            raise ValueError("worker.source_ids must not be empty when worker.require_assignments is enabled")
+        requested_ids = source_id_list(source_ids) if source_ids is not None else ()
+        if len(set(requested_ids)) != len(requested_ids):
+            raise ValueError("Duplicate requested source_id")
+        if requested_ids and assigned_ids:
+            unauthorized = [source_id for source_id in requested_ids if source_id not in assigned_ids]
+            if unauthorized:
+                raise ValueError(f"Requested source_id is not assigned to this worker: {', '.join(unauthorized)}")
+        selected_ids = requested_ids or assigned_ids
         if not selected_ids:
             return list(self.source_specs)
         specs_by_id = {spec.source_id: spec for spec in self.source_specs}
@@ -268,17 +531,49 @@ class RealtimePipeline:
         The current implementation runs sources sequentially; concurrency can be
         added here later without changing frame processing semantics.
         """
-        for source_spec in source_specs:
-            for packet in iter_frames(source_spec, vid_stride=vid_stride, max_frames=max_frames):
-                self.process_frame(packet.source, packet.timestamp_seconds, packet.frame)
-                if self.show:
-                    cv2.imshow("eating_behavior", packet.frame)
-                    key = cv2.waitKey(1) & 0xFF
-                    if key in {ord("q"), 27}:
-                        break
-        self.recorder.flush_csv()
-        if self.show:
-            cv2.destroyAllWindows()
+        stop_requested = False
+        try:
+            for source_spec in source_specs:
+                last_timestamp_seconds: float | None = None
+                end_reason = "disconnect" if is_stream_source(source_spec.uri) else "eof"
+                try:
+                    for packet in iter_frames(
+                        source_spec,
+                        vid_stride=vid_stride,
+                        max_frames=max_frames,
+                    ):
+                        last_timestamp_seconds = packet.timestamp_seconds
+                        self.process_frame(
+                            packet.source,
+                            packet.timestamp_seconds,
+                            packet.frame,
+                        )
+                        if self.show:
+                            cv2.imshow("eating_behavior", packet.frame)
+                            key = cv2.waitKey(1) & 0xFF
+                            if key in {ord("q"), 27}:
+                                end_reason = "manual_stop"
+                                stop_requested = True
+                                break
+                except KeyboardInterrupt:
+                    end_reason = "manual_stop"
+                    raise
+                except Exception:
+                    end_reason = "error"
+                    raise
+                finally:
+                    if last_timestamp_seconds is not None:
+                        self.finish_source(
+                            source_spec.source_id,
+                            last_timestamp_seconds,
+                            end_reason,
+                        )
+                if stop_requested:
+                    break
+        finally:
+            self.recorder.flush_csv()
+            if self.show:
+                cv2.destroyAllWindows()
 
     def run_source(
         self,
@@ -288,8 +583,22 @@ class RealtimePipeline:
         max_frames: int | None = None,
     ) -> None:
         """Debug entrypoint for one raw source, optionally tagged by source_id."""
+        if not self.config.allow_debug_source:
+            raise PermissionError("Raw --source input is disabled for this worker")
+        source_specs = resolve_source_specs(source, source_id=source_id)
+        if self.config.worker_source_ids:
+            unauthorized = [
+                spec.source_id
+                for spec in source_specs
+                if spec.source_id not in self.config.worker_source_ids
+            ]
+            if unauthorized:
+                raise PermissionError(
+                    "Raw source_id is not assigned to this worker: "
+                    + ", ".join(unauthorized)
+                )
         self._run_source_specs(
-            resolve_source_specs(source, source_id=source_id),
+            source_specs,
             vid_stride=vid_stride,
             max_frames=max_frames,
         )
@@ -306,6 +615,166 @@ class RealtimePipeline:
             raise ValueError("No configured sources to run")
         self._run_source_specs(source_specs, vid_stride=vid_stride, max_frames=max_frames)
 
+    def _eating_machine_for_source(self, source: str) -> EatingStateMachine:
+        """Return the current source-session machine, creating it lazily."""
+        machine = self.eating_machines.get(source)
+        if machine is not None:
+            return machine
+        session_sequence = self.source_session_sequences.get(source, 0) + 1
+        self.source_session_sequences[source] = session_sequence
+        machine = EatingStateMachine(
+            source,
+            self.config.eating_state,
+            session_id=f"{self.run_session_id}-{session_sequence}",
+            household_id=self.identity_service.household_id_for_source(source),
+        )
+        self.eating_machines[source] = machine
+        return machine
+
+    def _feeding_observation(
+        self,
+        source: str,
+        timestamp_seconds: float,
+        feeding_detections: list[Detection],
+        cat_decisions: list[tuple[Detection, CoatPrediction, IdentityDecision]],
+    ) -> EatingFrameObservation:
+        """Collapse a frame to one bounded source-level eating observation."""
+        if not feeding_detections:
+            return EatingFrameObservation(
+                timestamp_seconds=timestamp_seconds,
+                feeding_present=False,
+            )
+
+        feeding_confidence = max(
+            bounded_confidence(feeding.confidence)
+            for feeding in feeding_detections
+        )
+        associations: list[FeedingAssociation] = []
+        for feeding in feeding_detections:
+            association = associate_feeding_to_cat(
+                feeding,
+                cat_decisions,
+                max_distance_ratio=self.config.feeding_association_max_distance_ratio,
+                ambiguity_margin=self.config.feeding_association_ambiguity_margin,
+            )
+            if association is not None:
+                associations.append(association)
+
+        votes: tuple[IdentityVote, ...] = ()
+        associated_boxes = {association.cat_detection.xyxy for association in associations}
+        # The first implementation has one event stream per source. Only cast
+        # an identity vote when every feeding target is associated and all of
+        # them resolve to the same physical cat box.
+        if (
+            associations
+            and len(associations) == len(feeding_detections)
+            and len(associated_boxes) == 1
+        ):
+            association = max(
+                associations,
+                key=lambda item: item.feeding.confidence,
+            )
+            cat_name = event_cat_name(association.identity)
+            identity_confidence = association.identity.confidence
+            household_id = association.identity.household_id
+            if not cat_name and coat_prediction_rejection(
+                association.coat,
+                min_confidence=self.config.coat_min_confidence,
+                min_margin=self.config.coat_min_margin,
+            ) is None:
+                history = self.identity_timeline.infer(
+                    source=source,
+                    timestamp_seconds=timestamp_seconds,
+                    window_seconds=self.config.identity_history_seconds,
+                    coat_class=association.coat.class_name,
+                )
+                if history is not None:
+                    cat_name = history.cat_name
+                    identity_confidence = history.confidence
+                    household_id = history.household_id
+            if cat_name and household_id:
+                votes = (
+                    IdentityVote(
+                        cat_name=cat_name,
+                        identity_confidence=bounded_confidence(identity_confidence),
+                        household_id=household_id,
+                        coat_class=association.coat.class_name,
+                    ),
+                )
+
+        return EatingFrameObservation(
+            timestamp_seconds=timestamp_seconds,
+            feeding_present=True,
+            feeding_confidence=feeding_confidence,
+            identity_votes=votes,
+        )
+
+    def _record_completed_eating_event(self, event: CompletedEatingEvent) -> None:
+        """Persist one event-level state-machine result."""
+        household_id = event.household_id or self.identity_service.household_id_for_source(
+            event.source
+        )
+        self.recorder.record(
+            AnnouncementEvent(
+                event_type="cat_eating",
+                source=event.source,
+                timestamp_seconds=round(event.start_seconds, 3),
+                cat_name=event.cat_name,
+                coat_class=event.coat_class,
+                confidence=(
+                    event.event_identity_confidence if event.cat_name else 0.0
+                ),
+                message_key="cat_eating",
+                household_id=household_id,
+                details={
+                    "schema_version": 2,
+                    "event_id": event.event_id,
+                    "session_id": event.session_id,
+                    "event_sequence": event.event_sequence,
+                    "household_id": household_id,
+                    "start_seconds": round(event.start_seconds, 3),
+                    "end_seconds": round(event.end_seconds, 3),
+                    "duration_seconds": round(event.duration_seconds, 3),
+                    "event_identity_confidence": round(
+                        event.event_identity_confidence,
+                        6,
+                    ),
+                    "event_identity_margin": round(event.event_identity_margin, 6),
+                    "identity_rejected_reason": event.identity_rejected_reason,
+                    "observation_count": event.observation_count,
+                    "accepted_identity_observation_count": (
+                        event.accepted_identity_observation_count
+                    ),
+                    "feeding_confidence_mean": round(
+                        event.feeding_confidence_mean,
+                        6,
+                    ),
+                    "feeding_confidence_max": round(
+                        event.feeding_confidence_max,
+                        6,
+                    ),
+                    "end_reason": event.end_reason,
+                    "truncated": event.truncated,
+                },
+            )
+        )
+
+    def finish_source(
+        self,
+        source: str,
+        last_timestamp_seconds: float,
+        reason: str,
+    ) -> None:
+        """Finalize event state and clear media-time caches for one session."""
+        machine = self.eating_machines.pop(source, None)
+        try:
+            if machine is not None:
+                for event in machine.finish(last_timestamp_seconds, reason):
+                    self._record_completed_eating_event(event)
+        finally:
+            self.identity_timeline.clear_source(source)
+            self.throttler.clear_source(source)
+
     def process_frame(self, source: str, timestamp_seconds: float, frame: np.ndarray) -> None:
         """Process one frame and emit any resulting events."""
         self.identity_timeline.prune(source, timestamp_seconds, self.config.identity_history_seconds)
@@ -319,34 +788,53 @@ class RealtimePipeline:
             if crop.size == 0 or cat_det.area < self.config.coat_min_area:
                 # Very small or invalid crops skip coat classification.
                 coat = CoatPrediction(-1, "unknown", 0.0, "unknown", 0.0)
-                identity = self.identity_service.decide(source, "unknown", crop)
+                identity = self.identity_service.reject(
+                    source,
+                    method="insufficient_coat_crop",
+                    reason="cat_crop_below_minimum_area",
+                )
             else:
                 # source is a stable source_id. Identity routing first selects
                 # the household, then resolves cat_name inside that household.
                 coat = self.coat_classifier.classify(crop)
-                identity = self.identity_service.decide(source, coat.class_name, crop)
+                rejection = coat_prediction_rejection(
+                    coat,
+                    min_confidence=self.config.coat_min_confidence,
+                    min_margin=self.config.coat_min_margin,
+                )
+                if rejection is None:
+                    identity = self.identity_service.decide(
+                        source,
+                        coat.class_name,
+                        crop,
+                        evidence_confidence=coat.confidence,
+                    )
+                else:
+                    method, reason = rejection
+                    identity = self.identity_service.reject(
+                        source,
+                        method=method,
+                        reason=reason,
+                    )
             cat_decisions.append((cat_det, coat, identity))
 
-        for feeding in feeding_detections:
-            coat, identity = associate_feeding_to_cat(feeding, cat_decisions)
-            history_identity = None
-            if not event_cat_name(identity):
-                # If the current feeding frame is uncertain, reuse recent
-                # confirmed identity from the same source_id and coat_class.
-                history_identity = self.identity_timeline.infer(
-                    source=source,
-                    timestamp_seconds=timestamp_seconds,
-                    window_seconds=self.config.identity_history_seconds,
-                    coat_class=coat.class_name if coat is not None else None,
-                )
-            self._record_eating_event(source, timestamp_seconds, feeding, coat, identity, history_identity)
+        eating_observation = self._feeding_observation(
+            source,
+            timestamp_seconds,
+            feeding_detections,
+            cat_decisions,
+        )
+        eating_machine = self._eating_machine_for_source(source)
+        for completed_event in eating_machine.update(eating_observation):
+            self._record_completed_eating_event(completed_event)
 
         for cat_det, coat, identity in cat_decisions:
             # Timeline stores only confirmed identities; unknowns stay out.
             self.identity_timeline.add(source, timestamp_seconds, coat, identity)
             self._record_pass_event(source, timestamp_seconds, cat_det, coat, identity)
 
-        self._record_bowl_monitor_placeholder(source, timestamp_seconds)
+        if self.config.emit_bowl_placeholder:
+            self._record_bowl_monitor_placeholder(source, timestamp_seconds)
 
     def _record_pass_event(
         self,
@@ -383,84 +871,14 @@ class RealtimePipeline:
                     "identity_reason": identity.reason,
                     "identity_candidates": list(identity.candidates),
                     "coat_confidence": round(coat.confidence, 6),
+                    "coat_second_class": coat.second_class_name,
+                    "coat_second_confidence": round(coat.second_confidence, 6),
+                    "coat_margin": round(coat.confidence - coat.second_confidence, 6),
+                    "coat_min_confidence": self.config.coat_min_confidence,
+                    "coat_min_margin": self.config.coat_min_margin,
                     "detection_confidence": round(detection.confidence, 6),
                     "xyxy": detection.xyxy,
                 },
-            )
-        )
-
-    def _record_eating_event(
-        self,
-        source: str,
-        timestamp_seconds: float,
-        feeding: Detection,
-        coat: CoatPrediction | None,
-        identity: IdentityDecision | None,
-        history_identity: IdentityObservation | None,
-    ) -> None:
-        """Record a cat-eating event and choose the event-level cat name."""
-        current_cat_name = event_cat_name(identity)
-        if current_cat_name:
-            # Current-frame identity is the strongest source.
-            cat_name = current_cat_name
-            identity_source = "current_frame"
-            identity_confidence = float(identity.confidence) if identity is not None else 0.0
-            household_id = identity.household_id if identity is not None else ""
-        elif history_identity is not None:
-            # Fall back to recent identity timeline for the same source_id.
-            cat_name = history_identity.cat_name
-            identity_source = "recent_identity_timeline"
-            identity_confidence = history_identity.confidence
-            household_id = history_identity.household_id
-        else:
-            # Keep public cat_name blank when identity cannot be confirmed.
-            cat_name = ""
-            identity_source = "unidentified"
-            identity_confidence = 0.0
-            household_id = (
-                identity.household_id
-                if identity is not None
-                else self.identity_service.household_id_for_source(source)
-            )
-        coat_class = coat.class_name if coat is not None else "unknown"
-        key_name = cat_name or coat_class or "unidentified"
-        if not self.throttler.allow(
-            # Eating events are also throttled per source_id.
-            ("cat_eating", source, key_name),
-            timestamp_seconds,
-            self.config.eating_event_interval_seconds,
-        ):
-            return
-        details: dict[str, Any] = {
-            "household_id": household_id,
-            "identity_source": identity_source,
-            "identity_method": identity.method if identity is not None else "unassociated",
-            "identity_reason": identity.reason if identity is not None else "no_associated_cat",
-            "identity_candidates": list(identity.candidates) if identity is not None else [],
-            "identity_confidence": round(identity_confidence, 6),
-            "feeding_confidence": round(feeding.confidence, 6),
-            "xyxy": feeding.xyxy,
-        }
-        if history_identity is not None and identity_source == "recent_identity_timeline":
-            details.update(
-                {
-                    "history_age_seconds": round(timestamp_seconds - history_identity.timestamp_seconds, 3),
-                    "history_identity_method": history_identity.method,
-                    "history_coat_class": history_identity.coat_class,
-                    "identity_history_seconds": self.config.identity_history_seconds,
-                }
-            )
-        self.recorder.record(
-            AnnouncementEvent(
-                event_type="cat_eating",
-                source=source,
-                timestamp_seconds=round(timestamp_seconds, 3),
-                cat_name=cat_name,
-                coat_class=coat_class,
-                confidence=feeding.confidence,
-                message_key="cat_eating",
-                household_id=household_id,
-                details=details,
             )
         )
 

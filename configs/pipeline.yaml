@@ -12,12 +12,23 @@ coat:
   # Coat classifier settings. Tiny cat crops skip classification.
   imgsz: 128
   min_area: 16384
-  confidence: 0.0
+  confidence: 0.55
+  min_margin: 0.05
+
+association:
+  # Maximum feeding-center to cat-box distance, normalized by cat diagonal.
+  max_distance_ratio: 0.50
+  # Reject nearly tied candidates instead of guessing between cats.
+  ambiguity_margin: 0.10
 
 worker:
   # Production workers should receive only assigned source_id/camera_id values.
   # Empty means run all configured sources in this local snapshot.
   source_ids: []
+  # Production snapshots should set require_assignments=true and
+  # allow_debug_source=false so CLI input cannot expand worker authorization.
+  require_assignments: false
+  allow_debug_source: true
 
 sources: []
 # Worker-local source snapshot example. stream_url is not an identity key:
@@ -59,14 +70,29 @@ identity:
 events:
   # Reuse recent confirmed same-source and same-coat identity for eating events.
   identity_history_seconds: 8.0
+  # Source-local eating state machine (seconds, not frame counts).
+  enter_seconds: 2.0
+  exit_seconds: 5.0
+  merge_gap_seconds: 10.0
+  min_event_seconds: 2.0
+  event_confirm_ratio: 0.60
+  min_identity_observations: 2
+  max_identity_candidates: 32
+  # Do not publish a real-looking food-status event until that model exists.
+  emit_bowl_placeholder: false
   # Event throttling intervals are scoped by source_id.
   pass_event_interval_seconds: 5.0
+  # Kept for backward-compatible configs; completed eating events are emitted
+  # once by the state machine rather than periodically throttled observations.
   eating_event_interval_seconds: 2.0
   # Placeholder interval for future food-status model output.
   bowl_monitor_interval_seconds: 30.0
 
 output:
-  # Output toggles reserved for future output policies.
+  # Events are appended incrementally; only this bounded tail stays in memory.
   save_event_jsonl: true
   save_event_csv: true
+  max_recent_events: 1000
+  # Frame persistence is intentionally unavailable until retention and access
+  # controls are defined.
   save_frames: false
