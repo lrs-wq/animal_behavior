@@ -59,6 +59,108 @@ def test_pipeline_passes_explicit_model_security_policy(monkeypatch, tmp_path: P
     assert calls[1][1]["allow_pickle_weights"] is False
 
 
+def test_pipeline_requires_and_passes_pinned_pose_artifacts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    pose_calls: list[tuple[str, str, dict[str, object]]] = []
+
+    class FakeModel:
+        def __init__(self, model_path, **kwargs) -> None:
+            pass
+
+    class FakePose:
+        def __init__(self, config_path, checkpoint_path, **kwargs) -> None:
+            pose_calls.append((str(config_path), str(checkpoint_path), kwargs))
+
+        def predict(self, frame, cat_detections):
+            return tuple(None for _ in cat_detections)
+
+    monkeypatch.setattr(pipeline_module, "CatDetector", FakeModel)
+    monkeypatch.setattr(pipeline_module, "CoatClassifier", FakeModel)
+    monkeypatch.setattr(pipeline_module, "RTMPoseEstimator", FakePose)
+    root = str(tmp_path / "trusted")
+
+    RealtimePipeline.from_configs(
+        models_config={
+            "detection_model": "detector.pt",
+            "detection_model_sha256": "a" * 64,
+            "coat_classifier_model": "coat.pt",
+            "coat_classifier_model_sha256": "b" * 64,
+            "pose": {
+                "config": "cat_pose.py",
+                "config_sha256": "c" * 64,
+                "checkpoint": "cat_pose.pth",
+                "checkpoint_sha256": "d" * 64,
+            },
+            "security": {
+                "require_sha256": True,
+                "allow_pickle_weights": True,
+                "allowed_roots": [root],
+            },
+        },
+        pipeline_config={"pose": {"enabled": True}},
+        output_dir=tmp_path,
+        device="0",
+    )
+
+    assert pose_calls == [
+        (
+            "cat_pose.py",
+            "cat_pose.pth",
+            {
+                "device": "0",
+                "min_cat_area": 0,
+                "max_instances_per_frame": 8,
+                "allowed_roots": [root],
+                "expected_config_sha256": "c" * 64,
+                "expected_checkpoint_sha256": "d" * 64,
+                "allow_pickle_weights": True,
+            },
+        )
+    ]
+
+
+def test_pipeline_rejects_enabled_pose_without_both_hashes(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=r"models\.pose\.config_sha256"):
+        RealtimePipeline.from_configs(
+            models_config={
+                "detection_model": "detector.pt",
+                "detection_model_sha256": "a" * 64,
+                "coat_classifier_model": "coat.pt",
+                "coat_classifier_model_sha256": "b" * 64,
+                "pose": {
+                    "config": "cat_pose.py",
+                    "checkpoint": "cat_pose.pth",
+                },
+            },
+            pipeline_config={"pose": {"enabled": True}},
+            output_dir=tmp_path,
+        )
+
+
+def test_pose_hashes_remain_mandatory_when_global_hash_policy_is_disabled(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match=r"models\.pose\.config_sha256"):
+        RealtimePipeline.from_configs(
+            models_config={
+                "detection_model": "detector.onnx",
+                "coat_classifier_model": "coat.onnx",
+                "pose": {
+                    "config": "cat_pose.py",
+                    "checkpoint": "cat_pose.pth",
+                },
+                "security": {
+                    "require_sha256": False,
+                    "allow_pickle_weights": True,
+                    "allowed_roots": [str(tmp_path)],
+                },
+            },
+            pipeline_config={"pose": {"enabled": True}},
+            output_dir=tmp_path,
+        )
+
+
 @pytest.mark.parametrize("value", ["false", "no", "0", "off"])
 def test_pipeline_security_parses_false_strings(
     monkeypatch, tmp_path: Path, value: str
@@ -106,6 +208,9 @@ def test_pipeline_security_parses_false_strings(
         ({"detection": {"iou": 1.1}}, "detection.iou"),
         ({"detection": {"imgsz": 0}}, "detection.imgsz"),
         ({"coat": {"imgsz": 0}}, "coat.imgsz"),
+        ({"pose": {"keypoint_confidence": 1.1}}, "pose.keypoint_confidence"),
+        ({"pose": {"min_cat_area": -1}}, "pose.min_cat_area"),
+        ({"pose": {"max_instances_per_frame": 0}}, "pose.max_instances_per_frame"),
     ],
 )
 def test_numeric_security_settings_reject_invalid_values(

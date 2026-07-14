@@ -15,6 +15,14 @@ coat:
   confidence: 0.55
   min_margin: 0.05
 
+pose:
+  # RTMPose is optional so development machines without OpenMMLab still run.
+  # Deployment enables this only with the four pinned models.pose fields.
+  enabled: false
+  min_cat_area: 4096
+  max_instances_per_frame: 8
+  keypoint_confidence: 0.30
+
 association:
   # Maximum feeding-center to cat-box distance, normalized by cat diagonal.
   max_distance_ratio: 0.50

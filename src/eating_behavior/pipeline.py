@@ -7,6 +7,7 @@ in-memory configuration.
 
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from dataclasses import dataclass, field
@@ -36,6 +37,17 @@ from .media import (
     source_id_list,
 )
 from .models import CatDetector, CoatClassifier, CoatPrediction, Detection
+from .pose import (
+    DisabledPoseEstimator,
+    PoseEstimator,
+    PoseInferenceError,
+    PosePrediction,
+    RTMPoseEstimator,
+    draw_pose_predictions,
+)
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -58,6 +70,8 @@ class PipelineConfig:
     feeding_association_ambiguity_margin: float = 0.1
     eating_state: EatingStateConfig = field(default_factory=EatingStateConfig)
     emit_bowl_placeholder: bool = False
+    pose_enabled: bool = False
+    pose_keypoint_confidence: float = 0.3
 
     def __post_init__(self) -> None:
         """Reject unsafe or nonsensical hot-path configuration values."""
@@ -65,11 +79,14 @@ class PipelineConfig:
             raise ValueError(
                 "worker.allow_debug_source must be false when worker.require_assignments is enabled"
             )
+        if not isinstance(self.pose_enabled, bool):
+            raise ValueError("pose.enabled must be a boolean")
         if self.coat_min_area < 0:
             raise ValueError("coat.min_area must be >= 0")
         for field_name, value in (
             ("coat.confidence", self.coat_min_confidence),
             ("coat.min_margin", self.coat_min_margin),
+            ("pose.keypoint_confidence", self.pose_keypoint_confidence),
         ):
             if not math.isfinite(value) or not 0.0 <= value <= 1.0:
                 raise ValueError(f"{field_name} must be between 0 and 1")
@@ -90,6 +107,41 @@ class PipelineConfig:
         ):
             if not math.isfinite(value) or value < 0.0:
                 raise ValueError(f"{field_name} must be a finite value >= 0")
+
+
+@dataclass(frozen=True)
+class CatFrameAnalysis:
+    """All per-cat results produced from one detector box."""
+
+    detection: Detection
+    coat: CoatPrediction
+    identity: IdentityDecision
+    pose: PosePrediction | None
+
+
+@dataclass(frozen=True)
+class FrameAnalysis:
+    """Structured output for rendering, testing, and future downstream tasks."""
+
+    detections: tuple[Detection, ...]
+    cats: tuple[CatFrameAnalysis, ...]
+    eating_state: str
+    pose_error_code: str = ""
+
+    @property
+    def cat_decisions(
+        self,
+    ) -> tuple[tuple[Detection, CoatPrediction, IdentityDecision], ...]:
+        """Expose the legacy association tuple shape without rerunning models."""
+        return tuple(
+            (cat.detection, cat.coat, cat.identity)
+            for cat in self.cats
+        )
+
+    @property
+    def poses(self) -> tuple[PosePrediction, ...]:
+        """Return only successfully inferred poses."""
+        return tuple(cat.pose for cat in self.cats if cat.pose is not None)
 
 
 @dataclass(frozen=True)
@@ -261,6 +313,7 @@ class RealtimePipeline:
         config: PipelineConfig,
         source_specs: list[SourceSpec] | tuple[SourceSpec, ...] | None = None,
         show: bool = False,
+        pose_estimator: PoseEstimator | None = None,
     ) -> None:
         self.detector = detector
         self.coat_classifier = coat_classifier
@@ -269,10 +322,12 @@ class RealtimePipeline:
         self.config = config
         self.source_specs = tuple(source_specs or ())
         self.show = show
+        self.pose_estimator = pose_estimator or DisabledPoseEstimator()
         self.throttler = EventThrottler()
         self.identity_timeline = IdentityTimeline()
         self.eating_machines: dict[str, EatingStateMachine] = {}
         self.source_session_sequences: dict[str, int] = {}
+        self.pose_error_counts: dict[tuple[str, str], int] = {}
         self.run_session_id = uuid.uuid4().hex
 
     @classmethod
@@ -292,6 +347,10 @@ class RealtimePipeline:
         coat_cfg = config_mapping(
             pipeline_config.get("coat", {}),
             field_name="coat",
+        )
+        pose_cfg = config_mapping(
+            pipeline_config.get("pose", {}),
+            field_name="pose",
         )
         association_cfg = config_mapping(
             pipeline_config.get("association", {}),
@@ -318,6 +377,10 @@ class RealtimePipeline:
             models_config.get("security", {}),
             field_name="models.security",
         )
+        pose_model_cfg = config_mapping(
+            models_config.get("pose", {}),
+            field_name="models.pose",
+        )
         require_model_sha256 = config_bool(
             model_security_cfg.get("require_sha256", True),
             field_name="models.security.require_sha256",
@@ -332,6 +395,27 @@ class RealtimePipeline:
         if require_model_sha256 and (not detection_sha256 or not coat_sha256):
             raise ValueError(
                 "Both detection_model_sha256 and coat_classifier_model_sha256 are required"
+            )
+        pose_enabled = config_bool(
+            pose_cfg.get("enabled", False),
+            field_name="pose.enabled",
+        )
+        pose_config_path = pose_model_cfg.get("config")
+        pose_checkpoint_path = pose_model_cfg.get("checkpoint")
+        pose_config_sha256 = pose_model_cfg.get("config_sha256")
+        pose_checkpoint_sha256 = pose_model_cfg.get("checkpoint_sha256")
+        if pose_enabled and (not pose_config_path or not pose_checkpoint_path):
+            raise ValueError(
+                "models.pose.config and models.pose.checkpoint are required when pose is enabled"
+            )
+        if pose_enabled and (not pose_config_sha256 or not pose_checkpoint_sha256):
+            raise ValueError(
+                "models.pose.config_sha256 and models.pose.checkpoint_sha256 are required "
+                "when pose is enabled"
+            )
+        if pose_enabled and not allowed_model_roots:
+            raise ValueError(
+                "models.security.allowed_roots is required when pose is enabled"
             )
         detection_confidence = config_float(
             detection_cfg.get("confidence", 0.25),
@@ -349,6 +433,18 @@ class RealtimePipeline:
             coat_cfg.get("imgsz", 128),
             field_name="coat.imgsz",
         )
+        pose_keypoint_confidence = config_float(
+            pose_cfg.get("keypoint_confidence", 0.3),
+            field_name="pose.keypoint_confidence",
+        )
+        pose_min_cat_area = config_int(
+            pose_cfg.get("min_cat_area", 0),
+            field_name="pose.min_cat_area",
+        )
+        pose_max_instances = config_int(
+            pose_cfg.get("max_instances_per_frame", 8),
+            field_name="pose.max_instances_per_frame",
+        )
         for field_name, value in (
             ("detection.confidence", detection_confidence),
             ("detection.iou", detection_iou),
@@ -359,6 +455,12 @@ class RealtimePipeline:
             raise ValueError("detection.imgsz must be > 0")
         if coat_imgsz <= 0:
             raise ValueError("coat.imgsz must be > 0")
+        if not 0.0 <= pose_keypoint_confidence <= 1.0:
+            raise ValueError("pose.keypoint_confidence must be between 0 and 1")
+        if pose_min_cat_area < 0:
+            raise ValueError("pose.min_cat_area must be >= 0")
+        if pose_max_instances <= 0:
+            raise ValueError("pose.max_instances_per_frame must be > 0")
 
         detector = CatDetector(
             models_config["detection_model"],
@@ -378,6 +480,23 @@ class RealtimePipeline:
             expected_sha256=str(coat_sha256) if coat_sha256 else None,
             allow_pickle_weights=allow_pickle_weights,
         )
+        pose_estimator: PoseEstimator = DisabledPoseEstimator()
+        if pose_enabled:
+            pose_estimator = RTMPoseEstimator(
+                str(pose_config_path),
+                str(pose_checkpoint_path),
+                device=device,
+                min_cat_area=pose_min_cat_area,
+                max_instances_per_frame=pose_max_instances,
+                allowed_roots=allowed_model_roots,
+                expected_config_sha256=(
+                    str(pose_config_sha256) if pose_config_sha256 else None
+                ),
+                expected_checkpoint_sha256=(
+                    str(pose_checkpoint_sha256) if pose_checkpoint_sha256 else None
+                ),
+                allow_pickle_weights=allow_pickle_weights,
+            )
         identity_service = SourceIdentityService.from_config(identity_cfg)
         # Worker-local source snapshot: stable source_id plus real video URI.
         source_specs = configured_source_specs(sources_cfg)
@@ -490,9 +609,12 @@ class RealtimePipeline:
                     events_cfg.get("emit_bowl_placeholder", False),
                     field_name="events.emit_bowl_placeholder",
                 ),
+                pose_enabled=pose_enabled,
+                pose_keypoint_confidence=pose_keypoint_confidence,
             ),
             source_specs=source_specs,
             show=show,
+            pose_estimator=pose_estimator,
         )
 
     def configured_source_ids(self) -> tuple[str, ...]:
@@ -543,13 +665,18 @@ class RealtimePipeline:
                         max_frames=max_frames,
                     ):
                         last_timestamp_seconds = packet.timestamp_seconds
-                        self.process_frame(
+                        analysis = self.process_frame(
                             packet.source,
                             packet.timestamp_seconds,
                             packet.frame,
                         )
                         if self.show:
-                            cv2.imshow("eating_behavior", packet.frame)
+                            display_frame = draw_pose_predictions(
+                                packet.frame,
+                                analysis.poses,
+                                keypoint_threshold=self.config.pose_keypoint_confidence,
+                            )
+                            cv2.imshow("eating_behavior", display_frame)
                             key = cv2.waitKey(1) & 0xFF
                             if key in {ord("q"), 27}:
                                 end_reason = "manual_stop"
@@ -774,13 +901,36 @@ class RealtimePipeline:
         finally:
             self.identity_timeline.clear_source(source)
             self.throttler.clear_source(source)
+            self.pose_error_counts = {
+                key: count
+                for key, count in self.pose_error_counts.items()
+                if key[0] != source
+            }
 
-    def process_frame(self, source: str, timestamp_seconds: float, frame: np.ndarray) -> None:
-        """Process one frame and emit any resulting events."""
+    def process_frame(
+        self,
+        source: str,
+        timestamp_seconds: float,
+        frame: np.ndarray,
+    ) -> FrameAnalysis:
+        """Process one frame, emit events, and return reusable inference results."""
         self.identity_timeline.prune(source, timestamp_seconds, self.config.identity_history_seconds)
         detections = self.detector.detect(frame)
         cat_detections = [det for det in detections if is_named_class(det, self.config.cat_classes)]
         feeding_detections = [det for det in detections if is_named_class(det, self.config.feeding_classes)]
+
+        pose_error_code = ""
+        try:
+            pose_predictions = self.pose_estimator.predict(frame, cat_detections)
+        except PoseInferenceError as exc:
+            # Pose is currently an observational side channel.  A frame-level
+            # failure must be visible to consumers without corrupting the
+            # existing identity/eating state machine.
+            pose_error_code = exc.code
+            pose_predictions = tuple(None for _ in cat_detections)
+            self._note_pose_error(source, pose_error_code)
+        if len(pose_predictions) != len(cat_detections):
+            raise RuntimeError("Pose estimator result count does not match cat detections")
 
         cat_decisions: list[tuple[Detection, CoatPrediction, IdentityDecision]] = []
         for cat_det in cat_detections:
@@ -835,6 +985,37 @@ class RealtimePipeline:
 
         if self.config.emit_bowl_placeholder:
             self._record_bowl_monitor_placeholder(source, timestamp_seconds)
+
+        return FrameAnalysis(
+            detections=tuple(detections),
+            cats=tuple(
+                CatFrameAnalysis(
+                    detection=detection,
+                    coat=coat,
+                    identity=identity,
+                    pose=pose,
+                )
+                for (detection, coat, identity), pose in zip(
+                    cat_decisions,
+                    pose_predictions,
+                )
+            ),
+            eating_state=eating_machine.state.value,
+            pose_error_code=pose_error_code,
+        )
+
+    def _note_pose_error(self, source: str, error_code: str) -> None:
+        """Emit a bounded operational warning for persistent pose degradation."""
+        key = (source, error_code)
+        count = self.pose_error_counts.get(key, 0) + 1
+        self.pose_error_counts[key] = count
+        if count in {1, 10} or count % 300 == 0:
+            LOGGER.warning(
+                "Pose inference degraded for source=%r code=%s count=%d",
+                source,
+                error_code,
+                count,
+            )
 
     def _record_pass_event(
         self,

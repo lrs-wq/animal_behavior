@@ -6,6 +6,14 @@ detection_model_sha256: 7726d4ca9dae3812d2c0d84c15d23ce5dbf8607f9ff14bf16f448aae
 coat_classifier_model: D:/gogelila/Eating_behavior/yolo/runs_cls/cls_v2_yolo26n_200e_128_auto_batch/weights/best.pt
 coat_classifier_model_sha256: a1b832acf1155c5671d4cac8848d15427daf854e1bb68042231ddaa32a89d322
 
+# Optional RTMPose top-down model. Enable it in configs/pipeline.yaml only after
+# replacing these empty values with the matching, trusted AP-10K artifacts.
+pose:
+  config:
+  config_sha256:
+  checkpoint:
+  checkpoint_sha256:
+
 security:
   # .pt/.pth artifacts use pickle internally. Keep this explicit and pin the
   # exact trusted files above; prefer ONNX/TensorRT for future deployments.
