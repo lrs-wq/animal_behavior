@@ -431,8 +431,11 @@ def main() -> int:
     probes = {path: probe_video(path) for path in selected}
     relative_paths = [str(path.relative_to(input_root)) for path in selected]
 
-    models_config = load_yaml(args.models_config)
-    base_pipeline_config = load_yaml(args.pipeline_config)
+    # Resolve CLI paths at the process boundary.  Installed wheels do not
+    # contain the repository-level configs directory, so handing a relative
+    # path to the package helper would incorrectly anchor it inside site-packages.
+    models_config = load_yaml(args.models_config.resolve(strict=True))
+    base_pipeline_config = load_yaml(args.pipeline_config.resolve(strict=True))
     effective_pipeline_config = build_effective_config(base_pipeline_config, selected)
     (output_root / "effective_pipeline.yaml").write_text(
         yaml.safe_dump(effective_pipeline_config, sort_keys=False, allow_unicode=True),
