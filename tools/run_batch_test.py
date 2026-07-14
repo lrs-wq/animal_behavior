@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -203,7 +203,7 @@ class FfmpegAnnotatedWriter:
 
 
 def utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def positive_int(value: str) -> int:
