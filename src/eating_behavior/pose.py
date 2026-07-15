@@ -343,6 +343,11 @@ class RTMPoseEstimator:
             if not math.isfinite(x) or not math.isfinite(y):
                 x, y, score = 0.0, 0.0, 0.0
             else:
+                # Do not turn an invalid off-frame prediction into a seemingly
+                # valid point stuck to the image edge. Preserve safe bounded
+                # coordinates for consumers, but make the observation invisible.
+                if x < 0.0 or x > width - 1 or y < 0.0 or y > height - 1:
+                    score = 0.0
                 x = max(0.0, min(float(width - 1), x))
                 y = max(0.0, min(float(height - 1), y))
             points.append(

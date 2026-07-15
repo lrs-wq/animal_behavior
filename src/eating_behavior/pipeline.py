@@ -45,6 +45,8 @@ from .pose import (
     RTMPoseEstimator,
     draw_pose_predictions,
 )
+from .pose_filter import PoseFilterConfig, PoseFilterResult, TrackPoseFilter
+from .tracking import CatTracker, TrackedDetection, TrackingConfig
 
 
 LOGGER = logging.getLogger(__name__)
@@ -72,6 +74,8 @@ class PipelineConfig:
     emit_bowl_placeholder: bool = False
     pose_enabled: bool = False
     pose_keypoint_confidence: float = 0.3
+    tracking: TrackingConfig = field(default_factory=TrackingConfig)
+    pose_filter: PoseFilterConfig = field(default_factory=PoseFilterConfig)
 
     def __post_init__(self) -> None:
         """Reject unsafe or nonsensical hot-path configuration values."""
@@ -117,6 +121,13 @@ class CatFrameAnalysis:
     coat: CoatPrediction
     identity: IdentityDecision
     pose: PosePrediction | None
+    track_id: int | None = None
+    pose_detection: Detection | None = None
+    raw_pose: PosePrediction | None = None
+    pose_status: str = ""
+    pose_rejection_code: str = ""
+    pose_held_keypoints: int = 0
+    pose_dropped_keypoints: int = 0
 
 
 @dataclass(frozen=True)
@@ -314,6 +325,8 @@ class RealtimePipeline:
         source_specs: list[SourceSpec] | tuple[SourceSpec, ...] | None = None,
         show: bool = False,
         pose_estimator: PoseEstimator | None = None,
+        cat_tracker: CatTracker | None = None,
+        pose_filter: TrackPoseFilter | None = None,
     ) -> None:
         self.detector = detector
         self.coat_classifier = coat_classifier
@@ -323,6 +336,8 @@ class RealtimePipeline:
         self.source_specs = tuple(source_specs or ())
         self.show = show
         self.pose_estimator = pose_estimator or DisabledPoseEstimator()
+        self.cat_tracker = cat_tracker or CatTracker(config.tracking)
+        self.pose_filter = pose_filter or TrackPoseFilter(config.pose_filter)
         self.throttler = EventThrottler()
         self.identity_timeline = IdentityTimeline()
         self.eating_machines: dict[str, EatingStateMachine] = {}
@@ -351,6 +366,18 @@ class RealtimePipeline:
         pose_cfg = config_mapping(
             pipeline_config.get("pose", {}),
             field_name="pose",
+        )
+        pose_quality_cfg = config_mapping(
+            pose_cfg.get("quality", {}),
+            field_name="pose.quality",
+        )
+        pose_smoothing_cfg = config_mapping(
+            pose_cfg.get("smoothing", {}),
+            field_name="pose.smoothing",
+        )
+        tracking_cfg = config_mapping(
+            pipeline_config.get("tracking", {}),
+            field_name="tracking",
         )
         association_cfg = config_mapping(
             pipeline_config.get("association", {}),
@@ -425,6 +452,10 @@ class RealtimePipeline:
             detection_cfg.get("iou", 0.70),
             field_name="detection.iou",
         )
+        detection_nms_iou = config_float(
+            detection_cfg.get("nms_iou", detection_iou),
+            field_name="detection.nms_iou",
+        )
         detection_imgsz = config_int(
             detection_cfg.get("imgsz", 640),
             field_name="detection.imgsz",
@@ -448,6 +479,7 @@ class RealtimePipeline:
         for field_name, value in (
             ("detection.confidence", detection_confidence),
             ("detection.iou", detection_iou),
+            ("detection.nms_iou", detection_nms_iou),
         ):
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{field_name} must be between 0 and 1")
@@ -461,11 +493,124 @@ class RealtimePipeline:
             raise ValueError("pose.min_cat_area must be >= 0")
         if pose_max_instances <= 0:
             raise ValueError("pose.max_instances_per_frame must be > 0")
+        tracking_config = TrackingConfig(
+            enabled=config_bool(
+                tracking_cfg.get("enabled", False),
+                field_name="tracking.enabled",
+            ),
+            match_iou=config_float(
+                tracking_cfg.get("match_iou", 0.20),
+                field_name="tracking.match_iou",
+            ),
+            max_center_distance_ratio=config_float(
+                tracking_cfg.get("max_center_distance_ratio", 0.60),
+                field_name="tracking.max_center_distance_ratio",
+            ),
+            ambiguity_margin=config_float(
+                tracking_cfg.get("ambiguity_margin", 0.05),
+                field_name="tracking.ambiguity_margin",
+            ),
+            max_age_seconds=config_float(
+                tracking_cfg.get("max_age_seconds", 0.75),
+                field_name="tracking.max_age_seconds",
+            ),
+            bbox_smoothing_seconds=config_float(
+                tracking_cfg.get("bbox_smoothing_seconds", 0.12),
+                field_name="tracking.bbox_smoothing_seconds",
+            ),
+            max_tracks_per_source=config_int(
+                tracking_cfg.get("max_tracks_per_source", 32),
+                field_name="tracking.max_tracks_per_source",
+            ),
+        )
+        pose_filter_config = PoseFilterConfig(
+            enabled=config_bool(
+                pose_quality_cfg.get("enabled", False),
+                field_name="pose.quality.enabled",
+            ),
+            min_bbox_area_enter=config_int(
+                pose_quality_cfg.get("min_bbox_area_enter", 8192),
+                field_name="pose.quality.min_bbox_area_enter",
+            ),
+            min_bbox_area_keep=config_int(
+                pose_quality_cfg.get("min_bbox_area_keep", 6144),
+                field_name="pose.quality.min_bbox_area_keep",
+            ),
+            min_bbox_short_side=config_int(
+                pose_quality_cfg.get("min_bbox_short_side", 64),
+                field_name="pose.quality.min_bbox_short_side",
+            ),
+            point_enter_confidence=config_float(
+                pose_quality_cfg.get("point_enter_confidence", 0.50),
+                field_name="pose.quality.point_enter_confidence",
+            ),
+            point_keep_confidence=config_float(
+                pose_quality_cfg.get("point_keep_confidence", 0.30),
+                field_name="pose.quality.point_keep_confidence",
+            ),
+            enter_min_points=config_int(
+                pose_quality_cfg.get("enter_min_points", 5),
+                field_name="pose.quality.enter_min_points",
+            ),
+            enter_min_edges=config_int(
+                pose_quality_cfg.get("enter_min_edges", 3),
+                field_name="pose.quality.enter_min_edges",
+            ),
+            enter_min_anchors=config_int(
+                pose_quality_cfg.get("enter_min_anchors", 1),
+                field_name="pose.quality.enter_min_anchors",
+            ),
+            keep_min_points=config_int(
+                pose_quality_cfg.get("keep_min_points", 3),
+                field_name="pose.quality.keep_min_points",
+            ),
+            keep_min_edges=config_int(
+                pose_quality_cfg.get("keep_min_edges", 1),
+                field_name="pose.quality.keep_min_edges",
+            ),
+            max_bridge_gap_seconds=config_float(
+                pose_smoothing_cfg.get("max_bridge_gap_seconds", 0.15),
+                field_name="pose.smoothing.max_bridge_gap_seconds",
+            ),
+            reset_gap_seconds=config_float(
+                pose_smoothing_cfg.get("reset_gap_seconds", 0.30),
+                field_name="pose.smoothing.reset_gap_seconds",
+            ),
+            one_euro_min_cutoff=config_float(
+                pose_smoothing_cfg.get("one_euro_min_cutoff", 1.0),
+                field_name="pose.smoothing.one_euro_min_cutoff",
+            ),
+            one_euro_beta=config_float(
+                pose_smoothing_cfg.get("one_euro_beta", 0.5),
+                field_name="pose.smoothing.one_euro_beta",
+            ),
+            one_euro_derivative_cutoff=config_float(
+                pose_smoothing_cfg.get("one_euro_derivative_cutoff", 1.0),
+                field_name="pose.smoothing.one_euro_derivative_cutoff",
+            ),
+            reference_dt_seconds=config_float(
+                pose_smoothing_cfg.get("reference_dt_seconds", 0.05),
+                field_name="pose.smoothing.reference_dt_seconds",
+            ),
+            core_hold_frames=config_int(
+                pose_smoothing_cfg.get("core_hold_frames", 3),
+                field_name="pose.smoothing.core_hold_frames",
+            ),
+            joint_hold_frames=config_int(
+                pose_smoothing_cfg.get("joint_hold_frames", 2),
+                field_name="pose.smoothing.joint_hold_frames",
+            ),
+            paw_hold_frames=config_int(
+                pose_smoothing_cfg.get("paw_hold_frames", 2),
+                field_name="pose.smoothing.paw_hold_frames",
+            ),
+        )
 
         detector = CatDetector(
             models_config["detection_model"],
             confidence=detection_confidence,
             iou=detection_iou,
+            explicit_nms_iou=detection_nms_iou,
             imgsz=detection_imgsz,
             device=device,
             allowed_roots=allowed_model_roots,
@@ -611,6 +756,8 @@ class RealtimePipeline:
                 ),
                 pose_enabled=pose_enabled,
                 pose_keypoint_confidence=pose_keypoint_confidence,
+                tracking=tracking_config,
+                pose_filter=pose_filter_config,
             ),
             source_specs=source_specs,
             show=show,
@@ -906,6 +1053,8 @@ class RealtimePipeline:
                 for key, count in self.pose_error_counts.items()
                 if key[0] != source
             }
+            self.cat_tracker.clear_source(source)
+            self.pose_filter.clear_source(source)
 
     def process_frame(
         self,
@@ -918,19 +1067,80 @@ class RealtimePipeline:
         detections = self.detector.detect(frame)
         cat_detections = [det for det in detections if is_named_class(det, self.config.cat_classes)]
         feeding_detections = [det for det in detections if is_named_class(det, self.config.feeding_classes)]
-
         pose_error_code = ""
         try:
-            pose_predictions = self.pose_estimator.predict(frame, cat_detections)
+            tracked_cats = self.cat_tracker.update(
+                source,
+                timestamp_seconds,
+                cat_detections,
+                frame.shape,
+            )
+            if len(tracked_cats) != len(cat_detections):
+                raise RuntimeError(
+                    "Cat tracker result count does not match cat detections"
+                )
+        except Exception:
+            # Tracking only supplies pose crops. Fall back to aligned raw boxes
+            # so identity and eating state continue on their original evidence.
+            pose_error_code = "pose_tracking_failure"
+            self._note_pose_error(source, pose_error_code)
+            try:
+                self.cat_tracker.clear_source(source)
+            except Exception:
+                pass
+            try:
+                self.pose_filter.clear_source(source)
+            except Exception:
+                pass
+            tracked_cats = tuple(
+                TrackedDetection(None, detection, detection)
+                for detection in cat_detections
+            )
+        pose_detections = [item.smoothed_detection for item in tracked_cats]
+
+        try:
+            raw_pose_predictions = self.pose_estimator.predict(frame, pose_detections)
         except PoseInferenceError as exc:
             # Pose is currently an observational side channel.  A frame-level
             # failure must be visible to consumers without corrupting the
             # existing identity/eating state machine.
-            pose_error_code = exc.code
-            pose_predictions = tuple(None for _ in cat_detections)
-            self._note_pose_error(source, pose_error_code)
-        if len(pose_predictions) != len(cat_detections):
+            pose_error_code = pose_error_code or exc.code
+            raw_pose_predictions = tuple(None for _ in pose_detections)
+            self._note_pose_error(source, exc.code)
+        if len(raw_pose_predictions) != len(cat_detections):
             raise RuntimeError("Pose estimator result count does not match cat detections")
+        try:
+            pose_results: tuple[PoseFilterResult, ...] = tuple(
+                self.pose_filter.update(
+                    source,
+                    timestamp_seconds,
+                    tracked.track_id,
+                    tracked.smoothed_detection,
+                    raw_pose,
+                    frame.shape,
+                )
+                for tracked, raw_pose in zip(tracked_cats, raw_pose_predictions)
+            )
+        except Exception:
+            # Tracking and pose are observational side channels. An internal
+            # filtering failure must not prevent identity/eating evidence from
+            # reaching their state machines, and uncertain filter state must
+            # not leak into the next frame.
+            pose_error_code = pose_error_code or "pose_filter_failure"
+            self._note_pose_error(source, "pose_filter_failure")
+            try:
+                self.pose_filter.clear_source(source)
+            except Exception:
+                pass
+            pose_results = tuple(
+                PoseFilterResult(
+                    None,
+                    "rejected",
+                    "pose_filter_failure",
+                    dropped_keypoints=17,
+                )
+                for _ in raw_pose_predictions
+            )
 
         cat_decisions: list[tuple[Detection, CoatPrediction, IdentityDecision]] = []
         for cat_det in cat_detections:
@@ -993,11 +1203,20 @@ class RealtimePipeline:
                     detection=detection,
                     coat=coat,
                     identity=identity,
-                    pose=pose,
+                    pose=pose_result.prediction,
+                    track_id=tracked.track_id,
+                    pose_detection=tracked.smoothed_detection,
+                    raw_pose=raw_pose,
+                    pose_status=pose_result.status,
+                    pose_rejection_code=pose_result.rejection_code,
+                    pose_held_keypoints=pose_result.held_keypoints,
+                    pose_dropped_keypoints=pose_result.dropped_keypoints,
                 )
-                for (detection, coat, identity), pose in zip(
+                for (detection, coat, identity), tracked, raw_pose, pose_result in zip(
                     cat_decisions,
-                    pose_predictions,
+                    tracked_cats,
+                    raw_pose_predictions,
+                    pose_results,
                 )
             ),
             eating_state=eating_machine.state.value,

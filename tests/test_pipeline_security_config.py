@@ -206,11 +206,47 @@ def test_pipeline_security_parses_false_strings(
         ({"output": {"max_recent_events": True}}, "output.max_recent_events"),
         ({"detection": {"confidence": -0.1}}, "detection.confidence"),
         ({"detection": {"iou": 1.1}}, "detection.iou"),
+        ({"detection": {"nms_iou": -0.1}}, "detection.nms_iou"),
         ({"detection": {"imgsz": 0}}, "detection.imgsz"),
         ({"coat": {"imgsz": 0}}, "coat.imgsz"),
         ({"pose": {"keypoint_confidence": 1.1}}, "pose.keypoint_confidence"),
         ({"pose": {"min_cat_area": -1}}, "pose.min_cat_area"),
         ({"pose": {"max_instances_per_frame": 0}}, "pose.max_instances_per_frame"),
+        (
+            {"pose": {"quality": {"enabled": "sometimes"}}},
+            "pose.quality.enabled",
+        ),
+        (
+            {"pose": {"quality": {"point_enter_confidence": 1.1}}},
+            "pose.quality.point_enter_confidence",
+        ),
+        (
+            {"pose": {"quality": {"min_bbox_area_enter": -1}}},
+            "pose.quality.min_bbox_area_enter",
+        ),
+        (
+            {"pose": {"smoothing": {"max_bridge_gap_seconds": 0}}},
+            "pose.smoothing.max_bridge_gap_seconds",
+        ),
+        (
+            {"pose": {"smoothing": {"core_hold_frames": -1}}},
+            "pose.smoothing.core_hold_frames",
+        ),
+        ({"tracking": {"match_iou": -0.1}}, "tracking.match_iou"),
+        (
+            {"tracking": {"max_center_distance_ratio": 1.1}},
+            "tracking.max_center_distance_ratio",
+        ),
+        (
+            {"tracking": {"ambiguity_margin": -0.1}},
+            "tracking.ambiguity_margin",
+        ),
+        ({"tracking": {"max_age_seconds": 0}}, "tracking.max_age_seconds"),
+        (
+            {"tracking": {"bbox_smoothing_seconds": 0}},
+            "tracking.bbox_smoothing_seconds",
+        ),
+        ({"tracking": {"max_tracks_per_source": 0}}, "tracking.max_tracks_per_source"),
     ],
 )
 def test_numeric_security_settings_reject_invalid_values(

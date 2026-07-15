@@ -115,6 +115,7 @@ def test_pose_batches_selected_boxes_and_preserves_alignment(tmp_path: Path) -> 
     assert len(predictions[2].keypoints) == 17
     assert predictions[2].keypoints[0].x == 0.0
     assert predictions[2].keypoints[0].y == 63.0
+    assert predictions[2].keypoints[0].confidence == 0.0
     np.testing.assert_array_equal(
         api.inference_calls[0],
         np.asarray([[10, 10, 40, 40]], dtype=np.float32),

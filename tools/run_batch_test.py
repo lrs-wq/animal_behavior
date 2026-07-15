@@ -12,10 +12,11 @@ import shutil
 import subprocess
 import sys
 import time
+from array import array
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import cv2
 import numpy as np
@@ -39,6 +40,114 @@ class VideoProbe:
     fps: float
     frame_count: int
     duration_seconds: float
+
+
+class PoseStabilityDiagnostics:
+    """Measure bbox-local keypoint motion for raw and filtered track poses."""
+
+    def __init__(self, visibility_threshold: float) -> None:
+        self.visibility_threshold = visibility_threshold
+        self._previous: dict[
+            tuple[str, int, str], dict[int, tuple[float, float]]
+        ] = {}
+        # Compact C doubles keep an all-video run bounded in practice without
+        # the per-value object overhead of Python float lists.
+        self._steps: dict[str, array[float]] = {
+            "raw": array("d"),
+            "filtered": array("d"),
+        }
+
+    def observe(
+        self,
+        *,
+        source_id: str,
+        track_id: int | None,
+        raw_pose: PosePrediction | None,
+        filtered_pose: PosePrediction | None,
+    ) -> None:
+        """Record adjacent-frame local steps without joining untracked cats."""
+        if track_id is None:
+            return
+        self._observe_pose(source_id, track_id, "raw", raw_pose)
+        self._observe_pose(source_id, track_id, "filtered", filtered_pose)
+
+    def summary(self) -> dict[str, Any]:
+        """Return a compact JSON-safe distribution for each pose stream."""
+        return {
+            "coordinate_space": "bbox_local_xy",
+            "visibility_threshold": self.visibility_threshold,
+            "large_step_threshold": 0.2,
+            "raw": summarize_pose_steps(self._steps["raw"]),
+            "filtered": summarize_pose_steps(self._steps["filtered"]),
+        }
+
+    def _observe_pose(
+        self,
+        source_id: str,
+        track_id: int,
+        stream: str,
+        pose: PosePrediction | None,
+    ) -> None:
+        key = (source_id, track_id, stream)
+        current = self._local_visible_points(pose)
+        previous = self._previous.get(key, {})
+        for index in current.keys() & previous.keys():
+            current_x, current_y = current[index]
+            previous_x, previous_y = previous[index]
+            self._steps[stream].append(
+                math.hypot(current_x - previous_x, current_y - previous_y)
+            )
+        # Replacing the whole snapshot deliberately breaks continuity across a
+        # missing/low-confidence point instead of measuring a multi-frame jump.
+        self._previous[key] = current
+
+    def _local_visible_points(
+        self, pose: PosePrediction | None
+    ) -> dict[int, tuple[float, float]]:
+        if pose is None:
+            return {}
+        x1, y1, x2, y2 = pose.cat_xyxy
+        width = x2 - x1
+        height = y2 - y1
+        if width <= 0 or height <= 0:
+            return {}
+        return {
+            point.index: ((point.x - x1) / width, (point.y - y1) / height)
+            for point in pose.keypoints
+            if point.confidence >= self.visibility_threshold
+            and math.isfinite(point.x)
+            and math.isfinite(point.y)
+        }
+
+
+def summarize_pose_steps(values: Iterable[float]) -> dict[str, Any]:
+    """Summarize normalized pose steps while keeping empty runs explicit."""
+    if isinstance(values, array) and values.typecode == "d":
+        samples = np.frombuffer(values, dtype=np.float64)
+    else:
+        samples = np.fromiter(values, dtype=np.float64)
+    if samples.size == 0:
+        return {
+            "step_count": 0,
+            "mean_local_step": None,
+            "p50_local_step": None,
+            "p95_local_step": None,
+            "p99_local_step": None,
+            "max_local_step": None,
+            "large_step_count": 0,
+            "large_step_rate": None,
+        }
+    large_step_count = int(np.count_nonzero(samples > 0.2))
+    return {
+        "step_count": int(samples.size),
+        "mean_local_step": round(float(np.mean(samples)), 6),
+        "p50_local_step": round(float(np.percentile(samples, 50)), 6),
+        "p95_local_step": round(float(np.percentile(samples, 95)), 6),
+        "p99_local_step": round(float(np.percentile(samples, 99)), 6),
+        "max_local_step": round(float(np.max(samples)), 6),
+        "large_step_count": large_step_count,
+        "large_step_rate": round(large_step_count / int(samples.size), 6),
+    }
 
 
 class FfmpegAnnotatedWriter:
@@ -301,6 +410,129 @@ def draw_text(
     )
 
 
+def cat_pose_label(cat: Any, visibility_threshold: float) -> str:
+    """Build a compact overlay label for tracking and pose-filter state."""
+    track_id = getattr(cat, "track_id", None)
+    filtered_pose = getattr(cat, "pose", None)
+    raw_pose = (
+        getattr(cat, "raw_pose")
+        if hasattr(cat, "raw_pose")
+        else filtered_pose
+    )
+    status = getattr(cat, "pose_status", "") or (
+        "raw" if raw_pose is not None else "missing"
+    )
+    rejection = getattr(cat, "pose_rejection_code", "")
+    held = int(getattr(cat, "pose_held_keypoints", 0))
+    dropped = int(getattr(cat, "pose_dropped_keypoints", 0))
+    raw_visible = (
+        raw_pose.visible_keypoint_count(visibility_threshold)
+        if raw_pose is not None
+        else 0
+    )
+    filtered_visible = (
+        filtered_pose.visible_keypoint_count(visibility_threshold)
+        if filtered_pose is not None
+        else 0
+    )
+    parts = [
+        f"track={track_id if track_id is not None else '-'}",
+        f"pose={status}",
+        f"raw={'ok' if raw_pose is not None else 'missing'}:{raw_visible}",
+        f"filt={'ok' if filtered_pose is not None else 'missing'}:{filtered_visible}",
+    ]
+    if held or dropped:
+        parts.append(f"held/drop={held}/{dropped}")
+    if rejection:
+        parts.append(f"reject={rejection}")
+    return " ".join(parts)
+
+
+def accumulate_pose_frame(
+    result: dict[str, Any],
+    cats: Iterable[Any],
+    *,
+    source_id: str,
+    visibility_threshold: float,
+    stability: PoseStabilityDiagnostics,
+    batch_stability: PoseStabilityDiagnostics | None = None,
+    track_ids: set[int] | None = None,
+) -> dict[Detection, str]:
+    """Update additive pose diagnostics and return per-cat render labels."""
+    cats = tuple(cats)
+    raw_frame = False
+    filtered_frame = False
+    labels: dict[Detection, str] = {}
+    for cat in cats:
+        filtered_pose = getattr(cat, "pose", None)
+        raw_pose = (
+            getattr(cat, "raw_pose")
+            if hasattr(cat, "raw_pose")
+            else filtered_pose
+        )
+        track_id = getattr(cat, "track_id", None)
+        if track_id is None:
+            result["untracked_cat_instances"] += 1
+        else:
+            result["tracked_cat_instances"] += 1
+            if track_ids is not None:
+                track_ids.add(track_id)
+
+        if raw_pose is not None:
+            raw_frame = True
+            result["raw_pose_instances"] += 1
+            result["raw_pose_visible_keypoints"] += raw_pose.visible_keypoint_count(
+                visibility_threshold
+            )
+        if filtered_pose is not None:
+            filtered_frame = True
+            visible = filtered_pose.visible_keypoint_count(visibility_threshold)
+            result["filtered_pose_instances"] += 1
+            result["filtered_pose_visible_keypoints"] += visible
+            # Preserve the pre-existing summary fields and their filtered-pose
+            # meaning for downstream consumers.
+            result["pose_instances"] += 1
+            result["pose_visible_keypoints"] += visible
+
+        status = getattr(cat, "pose_status", "") or (
+            "raw" if raw_pose is not None else "missing"
+        )
+        status_counts = result["pose_status_counts"]
+        status_counts[status] = status_counts.get(status, 0) + 1
+        rejection = getattr(cat, "pose_rejection_code", "")
+        if rejection:
+            rejection_codes = result["pose_rejection_codes"]
+            rejection_codes[rejection] = rejection_codes.get(rejection, 0) + 1
+        result["pose_held_keypoints"] += int(
+            getattr(cat, "pose_held_keypoints", 0)
+        )
+        result["pose_dropped_keypoints"] += int(
+            getattr(cat, "pose_dropped_keypoints", 0)
+        )
+
+        stability.observe(
+            source_id=source_id,
+            track_id=track_id,
+            raw_pose=raw_pose,
+            filtered_pose=filtered_pose,
+        )
+        if batch_stability is not None:
+            batch_stability.observe(
+                source_id=source_id,
+                track_id=track_id,
+                raw_pose=raw_pose,
+                filtered_pose=filtered_pose,
+            )
+        labels[cat.detection] = cat_pose_label(cat, visibility_threshold)
+
+    if raw_frame:
+        result["raw_pose_frames"] += 1
+    if filtered_frame:
+        result["filtered_pose_frames"] += 1
+        result["pose_frames"] += 1
+    return labels
+
+
 def render_frame(
     frame: np.ndarray,
     detections: tuple[Detection, ...],
@@ -316,6 +548,7 @@ def render_frame(
     association_max_distance_ratio: float,
     association_ambiguity_margin: float,
     pose_keypoint_confidence: float,
+    cat_pose_labels: dict[Detection, str] | None = None,
 ) -> np.ndarray:
     rendered = draw_pose_predictions(
         frame,
@@ -333,6 +566,10 @@ def render_frame(
                 f"cat {detection.confidence:.2f} coat={coat.class_name} "
                 f"{coat.confidence:.2f}/{margin:.2f} id={confirmed_name}"
             )
+            if cat_pose_labels and detection in cat_pose_labels:
+                # Put operational diagnostics first so track/status remain
+                # visible even when a long label reaches the frame edge.
+                label = cat_pose_labels[detection] + " " + label
         elif is_named_class(detection, feeding_classes):
             color = (20, 90, 230)
             association = associate_feeding_to_cat(
@@ -420,6 +657,53 @@ def verify_output(
     return {"bytes": path.stat().st_size, "probe": asdict(actual)}
 
 
+def merge_count_maps(
+    results: Iterable[dict[str, Any]], field_name: str
+) -> dict[str, int]:
+    """Merge per-video categorical counters into one deterministic map."""
+    merged: dict[str, int] = {}
+    for result in results:
+        for key, count in result.get(field_name, {}).items():
+            merged[key] = merged.get(key, 0) + int(count)
+    return dict(sorted(merged.items()))
+
+
+def batch_pose_diagnostics(
+    results: Iterable[dict[str, Any]], stability: PoseStabilityDiagnostics
+) -> dict[str, Any]:
+    """Aggregate additive counters while retaining every legacy result field."""
+    results = tuple(results)
+    summed_fields = (
+        "raw_pose_frames",
+        "raw_pose_instances",
+        "raw_pose_visible_keypoints",
+        "filtered_pose_frames",
+        "filtered_pose_instances",
+        "filtered_pose_visible_keypoints",
+        "pose_held_keypoints",
+        "pose_dropped_keypoints",
+        "tracked_cat_instances",
+        "untracked_cat_instances",
+    )
+    summary = {
+        field_name: sum(int(result.get(field_name, 0)) for result in results)
+        for field_name in summed_fields
+    }
+    summary.update(
+        {
+            "unique_source_track_count": sum(
+                len(result.get("track_ids", [])) for result in results
+            ),
+            "pose_status_counts": merge_count_maps(results, "pose_status_counts"),
+            "pose_rejection_codes": merge_count_maps(
+                results, "pose_rejection_codes"
+            ),
+            "stability": stability.summary(),
+        }
+    )
+    return summary
+
+
 def main() -> int:
     args = parse_args()
     input_root = args.input_root.resolve(strict=True)
@@ -443,7 +727,7 @@ def main() -> int:
     )
 
     summary: dict[str, Any] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "initializing",
         "started_at": utc_now(),
         "finished_at": None,
@@ -469,6 +753,9 @@ def main() -> int:
     atomic_write_json(output_root / "batch_summary.json", summary)
 
     batch_started = time.monotonic()
+    batch_stability = PoseStabilityDiagnostics(
+        pipeline.config.pose_keypoint_confidence
+    )
     for video_number, (source_spec, source_video) in enumerate(
         zip(source_specs, selected), 1
     ):
@@ -487,9 +774,26 @@ def main() -> int:
             "pose_visible_keypoints": 0,
             "pose_error_frames": 0,
             "pose_error_codes": {},
+            "raw_pose_frames": 0,
+            "raw_pose_instances": 0,
+            "raw_pose_visible_keypoints": 0,
+            "filtered_pose_frames": 0,
+            "filtered_pose_instances": 0,
+            "filtered_pose_visible_keypoints": 0,
+            "pose_status_counts": {},
+            "pose_rejection_codes": {},
+            "pose_held_keypoints": 0,
+            "pose_dropped_keypoints": 0,
+            "tracked_cat_instances": 0,
+            "untracked_cat_instances": 0,
+            "track_ids": [],
             "started_at": utc_now(),
             "finished_at": None,
         }
+        pose_stability = PoseStabilityDiagnostics(
+            pipeline.config.pose_keypoint_confidence
+        )
+        track_ids: set[int] = set()
         summary["results"].append(result)
         atomic_write_json(output_root / "batch_summary.json", summary)
         print(
@@ -520,15 +824,15 @@ def main() -> int:
                     packet.timestamp_seconds,
                     packet.frame,
                 )
-                if analysis.poses:
-                    result["pose_frames"] += 1
-                    result["pose_instances"] += len(analysis.poses)
-                    result["pose_visible_keypoints"] += sum(
-                        pose.visible_keypoint_count(
-                            pipeline.config.pose_keypoint_confidence
-                        )
-                        for pose in analysis.poses
-                    )
+                cat_pose_labels = accumulate_pose_frame(
+                    result,
+                    analysis.cats,
+                    source_id=packet.source,
+                    visibility_threshold=(pipeline.config.pose_keypoint_confidence),
+                    stability=pose_stability,
+                    batch_stability=batch_stability,
+                    track_ids=track_ids,
+                )
                 if analysis.pose_error_code:
                     result["pose_error_frames"] += 1
                     error_codes = result["pose_error_codes"]
@@ -553,6 +857,7 @@ def main() -> int:
                         pipeline.config.feeding_association_ambiguity_margin
                     ),
                     pose_keypoint_confidence=(pipeline.config.pose_keypoint_confidence),
+                    cat_pose_labels=cat_pose_labels,
                 )
                 writer.write(rendered)
                 result["processed_frames"] += 1
@@ -565,6 +870,7 @@ def main() -> int:
                         flush=True,
                     )
                     result["processing_seconds"] = round(elapsed, 3)
+                    result["track_ids"] = sorted(track_ids)
                     atomic_write_json(output_root / "batch_summary.json", summary)
             if result["processed_frames"] == 0:
                 raise RuntimeError("No frames were processed")
@@ -600,6 +906,8 @@ def main() -> int:
         finally:
             elapsed = time.monotonic() - source_started
             result["processing_seconds"] = round(elapsed, 3)
+            result["track_ids"] = sorted(track_ids)
+            result["pose_stability"] = pose_stability.summary()
             result["finished_at"] = utc_now()
             atomic_write_json(output_root / "batch_summary.json", summary)
         print(
@@ -614,6 +922,9 @@ def main() -> int:
     summary["completed_count"] = completed
     summary["failed_count"] = failed
     summary["processing_seconds"] = round(time.monotonic() - batch_started, 3)
+    summary["pose_diagnostics"] = batch_pose_diagnostics(
+        summary["results"], batch_stability
+    )
     summary["finished_at"] = utc_now()
     summary["status"] = "completed" if failed == 0 else "completed_with_failures"
     atomic_write_json(output_root / "batch_summary.json", summary)

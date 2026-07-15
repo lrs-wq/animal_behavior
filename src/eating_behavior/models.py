@@ -155,6 +155,57 @@ class Detection:
         return max(0, x2 - x1) * max(0, y2 - y1)
 
 
+def detection_iou(first: Detection, second: Detection) -> float:
+    """Return intersection-over-union for two valid project detections."""
+    ax1, ay1, ax2, ay2 = first.xyxy
+    bx1, by1, bx2, by2 = second.xyxy
+    intersection_width = max(0, min(ax2, bx2) - max(ax1, bx1))
+    intersection_height = max(0, min(ay2, by2) - max(ay1, by1))
+    intersection = intersection_width * intersection_height
+    union = first.area + second.area - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def class_aware_nms(
+    detections: Iterable[Detection],
+    iou_threshold: float,
+) -> list[Detection]:
+    """Apply deterministic class-aware NMS outside the model runtime.
+
+    Some end-to-end Ultralytics checkpoints intentionally bypass the library's
+    NMS implementation.  Keeping this policy in the project boundary makes the
+    configured threshold effective for every compatible checkpoint.  Boxes of
+    different classes never suppress each other.
+    """
+    if (
+        isinstance(iou_threshold, bool)
+        or not isinstance(iou_threshold, (int, float))
+        or not math.isfinite(iou_threshold)
+        or not 0.0 <= iou_threshold <= 1.0
+    ):
+        raise ValueError("Explicit NMS IoU must be between 0 and 1")
+
+    candidates = list(detections)
+    ranked = sorted(
+        range(len(candidates)),
+        key=lambda index: (-candidates[index].confidence, index),
+    )
+    kept: list[int] = []
+    for candidate_index in ranked:
+        candidate = candidates[candidate_index]
+        duplicate = any(
+            candidate.class_id == candidates[kept_index].class_id
+            and detection_iou(candidate, candidates[kept_index]) > iou_threshold
+            for kept_index in kept
+        )
+        if not duplicate:
+            kept.append(candidate_index)
+
+    # Preserve detector order for downstream code while still choosing winners
+    # by confidence above.
+    return [candidates[index] for index in sorted(kept)]
+
+
 @dataclass(frozen=True)
 class CoatPrediction:
     """Coat/appearance classifier result for one cat crop."""
@@ -186,6 +237,7 @@ class CatDetector:
         imgsz: int = 640,
         device: str | None = None,
         *,
+        explicit_nms_iou: float | None = None,
         allowed_roots: Iterable[str | Path] | str | Path | None = None,
         expected_sha256: str | None = None,
         allow_pickle_weights: bool = True,
@@ -206,6 +258,15 @@ class CatDetector:
             raise ValueError("Detection IoU must be between 0 and 1")
         if isinstance(imgsz, bool) or not isinstance(imgsz, int) or imgsz <= 0:
             raise ValueError("Detection imgsz must be a positive integer")
+        if explicit_nms_iou is None:
+            explicit_nms_iou = iou
+        if (
+            isinstance(explicit_nms_iou, bool)
+            or not isinstance(explicit_nms_iou, (int, float))
+            or not math.isfinite(explicit_nms_iou)
+            or not 0.0 <= explicit_nms_iou <= 1.0
+        ):
+            raise ValueError("Explicit NMS IoU must be between 0 and 1")
         self.model_path = validate_model_artifact(
             model_path,
             allowed_roots=allowed_roots,
@@ -215,6 +276,7 @@ class CatDetector:
         self.model = YOLO(str(self.model_path))
         self.confidence = confidence
         self.iou = iou
+        self.explicit_nms_iou = float(explicit_nms_iou)
         self.imgsz = imgsz
         self.device = device
 
@@ -257,7 +319,7 @@ class CatDetector:
                     xyxy=(x1, y1, x2, y2),
                 )
             )
-        return detections
+        return class_aware_nms(detections, self.explicit_nms_iou)
 
 
 class CoatClassifier:

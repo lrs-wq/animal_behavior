@@ -19,13 +19,68 @@ D:\Anaconda3\envs\yolo\python.exe -m eating_behavior.main --source D:\path\to\vi
 ```text
 视频/视频流
   -> 猫检测 cat / feeding_head
-  -> cat 裁剪图毛色分类
-  -> 查询家庭猫配置
-  -> 如果该毛色只有一只注册猫，直接确认身份
-  -> 如果该毛色有多只猫，进入身份确认分支
-  -> feeding_head 触发吃饭事件
+  -> 项目侧显式同类 NMS
+  -> 原始 cat 框 -> 毛色分类、身份判断、feeding_head 关联和事件状态机
+  -> 原始 cat 框 -> source 内 track -> bbox 平滑 -> RTMPose
+  -> 姿态质量/几何门控 -> 按 (source_id, track_id) 做关键点时序滤波
   -> 猫经过/猫吃饭/余粮监控事件写入 announcement_events
 ```
+
+## 检测、跟踪与姿态边界
+
+`detection.nms_iou` 控制项目自身的 class-aware NMS。它在模型输出转换为 `Detection` 后始终执行，只让同一类别的重叠框互相抑制；不同类别（例如 `cat` 与 `feeding_head`）不会互相删除。这样即使端到端检测权重绕过 Ultralytics 内部 NMS，项目仍会得到确定的去重结果。`detection.iou` 仍会传给检测后端，但不能替代项目侧 NMS。
+
+NMS 后的 cat 框有两条用途不同的分支：
+
+- 身份、毛色、`feeding_head` 关联、进食判断和事件记录始终使用未平滑的检测框；
+- 姿态分支在每个 `source_id` 内分配临时 `track_id`，再平滑 bbox，平滑框只作为 RTMPose 的 top-down crop 和姿态坐标参考。
+
+这里的 `track_id` 只是同一路视频会话内的姿态时序键，不是猫身份。匹配结合 IoU、中心距离和短时运动预测；候选近似并列时不继承旧 track，避免把一只猫的关键点历史带给另一只猫。视频会话结束、时间戳回退或 track 过期后，相应状态会清理。
+
+RTMPose 原始输出先经过置信度滞回、bbox 面积/短边、关键点边界、AP-10K 骨架连通性与骨长等质量/几何门控。通过门控的坐标在 bbox 局部坐标系中按 `(source_id, track_id)` 使用 One Euro 滤波；短暂缺点可按关键点类型有限 hold 并衰减置信度，超过桥接时间或 reset 间隔后不再沿用历史。该链路只改变对外姿态结果，不会把姿态分数、平滑框或 track 写入身份、进食关联和事件证据。
+
+主要配置键位于 `configs/pipeline.yaml`：
+
+```yaml
+detection:
+  iou: 0.70
+  nms_iou: 0.70
+
+tracking:
+  enabled: true
+  match_iou: 0.20
+  max_center_distance_ratio: 0.60
+  ambiguity_margin: 0.05
+  max_age_seconds: 0.75
+  bbox_smoothing_seconds: 0.12
+  max_tracks_per_source: 32
+
+pose:
+  quality:
+    enabled: true
+    min_bbox_area_enter: 8192
+    min_bbox_area_keep: 6144
+    min_bbox_short_side: 64
+    point_enter_confidence: 0.50
+    point_keep_confidence: 0.30
+    enter_min_points: 5
+    enter_min_edges: 3
+    enter_min_anchors: 1
+    keep_min_points: 3
+    keep_min_edges: 1
+  smoothing:
+    max_bridge_gap_seconds: 0.15
+    reset_gap_seconds: 0.30
+    one_euro_min_cutoff: 1.0
+    one_euro_beta: 0.5
+    one_euro_derivative_cutoff: 1.0
+    reference_dt_seconds: 0.05
+    core_hold_frames: 3
+    joint_hold_frames: 2
+    paw_hold_frames: 2
+```
+
+`pose.quality.enabled: false` 时质量门控和关键点时序滤波整体旁路；`tracking.enabled: false` 时姿态直接使用当前检测框且不产生可复用的 track 历史。
 
 ## 播报
 

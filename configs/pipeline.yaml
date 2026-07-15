@@ -2,6 +2,9 @@ detection:
   # YOLO detection thresholds. cat is the full cat box, feeding_head marks eating.
   confidence: 0.25
   iou: 0.70
+  # Always apply project-owned class-aware NMS. Some end-to-end checkpoints
+  # bypass Ultralytics NMS, making its iou argument ineffective.
+  nms_iou: 0.70
   imgsz: 640
   cat_classes:
     - cat
@@ -22,6 +25,45 @@ pose:
   min_cat_area: 4096
   max_instances_per_frame: 8
   keypoint_confidence: 0.30
+  quality:
+    # New tracks need strong connected evidence; established tracks use lower
+    # keep thresholds so brief occlusion does not make the skeleton flicker.
+    enabled: true
+    min_bbox_area_enter: 8192
+    min_bbox_area_keep: 6144
+    min_bbox_short_side: 64
+    point_enter_confidence: 0.50
+    point_keep_confidence: 0.30
+    enter_min_points: 5
+    enter_min_edges: 3
+    enter_min_anchors: 1
+    keep_min_points: 3
+    keep_min_edges: 1
+  smoothing:
+    # State is isolated by source_id and track_id. Coordinates are filtered in
+    # bbox-local space so ordinary detector-box motion is not mistaken for a
+    # keypoint jump.
+    max_bridge_gap_seconds: 0.15
+    reset_gap_seconds: 0.30
+    one_euro_min_cutoff: 1.0
+    one_euro_beta: 0.5
+    one_euro_derivative_cutoff: 1.0
+    reference_dt_seconds: 0.05
+    core_hold_frames: 3
+    joint_hold_frames: 2
+    paw_hold_frames: 2
+
+tracking:
+  # Tracking is source-local. Smoothed boxes are used only for pose crops; raw
+  # boxes remain the evidence for identity and eating-event decisions.
+  enabled: true
+  match_iou: 0.20
+  max_center_distance_ratio: 0.60
+  # Fail open (no inherited pose history) when two assignments are nearly tied.
+  ambiguity_margin: 0.05
+  max_age_seconds: 0.75
+  bbox_smoothing_seconds: 0.12
+  max_tracks_per_source: 32
 
 association:
   # Maximum feeding-center to cat-box distance, normalized by cat diagonal.
