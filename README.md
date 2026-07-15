@@ -250,6 +250,8 @@ coat_class -> candidate cats
 
 因此数据库规模可以按万级客户设计，但每个推理进程内存中只持有自己负责的几十路摄像头数据。只要不在每帧中查库，数据库不会影响推理性能。
 
+10 万路摄像头的容量和成本估算见 [docs/camera_capacity_cost_estimate.md](docs/camera_capacity_cost_estimate.md)。该估算基于每路 0.5FPS 候选图片全量检测、审核资源和业务冗余，正式采购前必须以真实压测结果修正。
+
 ## 1. 项目目标
 
 正式项目的目标是把当前原型脚本整理成稳定、可维护、可评估的推理系统：
