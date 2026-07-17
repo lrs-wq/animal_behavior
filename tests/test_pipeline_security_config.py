@@ -5,7 +5,25 @@ from pathlib import Path
 import pytest
 
 import eating_behavior.pipeline as pipeline_module
-from eating_behavior.pipeline import RealtimePipeline
+from eating_behavior.pipeline import RealtimePipeline, parse_posture_config
+
+
+def test_posture_events_are_opt_in_and_require_pose_pipeline() -> None:
+    assert not parse_posture_config(
+        {},
+        pose_enabled=True,
+        pose_keypoint_confidence=0.3,
+    ).enabled
+    assert parse_posture_config(
+        {"enabled": True},
+        pose_enabled=True,
+        pose_keypoint_confidence=0.3,
+    ).enabled
+    assert not parse_posture_config(
+        {"enabled": True},
+        pose_enabled=False,
+        pose_keypoint_confidence=0.3,
+    ).enabled
 
 
 def test_pipeline_requires_both_model_hashes_by_default(tmp_path: Path) -> None:
@@ -80,7 +98,7 @@ def test_pipeline_requires_and_passes_pinned_pose_artifacts(
     monkeypatch.setattr(pipeline_module, "RTMPoseEstimator", FakePose)
     root = str(tmp_path / "trusted")
 
-    RealtimePipeline.from_configs(
+    pipeline = RealtimePipeline.from_configs(
         models_config={
             "detection_model": "detector.pt",
             "detection_model_sha256": "a" * 64,
@@ -98,7 +116,16 @@ def test_pipeline_requires_and_passes_pinned_pose_artifacts(
                 "allowed_roots": [root],
             },
         },
-        pipeline_config={"pose": {"enabled": True}},
+        pipeline_config={
+            "pose": {
+                "enabled": True,
+                "posture": {
+                    "enabled": True,
+                    "transition_confirm_seconds": 0.75,
+                    "min_confirmed_observations": 4,
+                },
+            }
+        },
         output_dir=tmp_path,
         device="0",
     )
@@ -118,6 +145,9 @@ def test_pipeline_requires_and_passes_pinned_pose_artifacts(
             },
         )
     ]
+    assert pipeline.config.posture.enabled is True
+    assert pipeline.config.posture.transition_confirm_seconds == 0.75
+    assert pipeline.config.posture.min_confirmed_observations == 4
 
 
 def test_pipeline_rejects_enabled_pose_without_both_hashes(tmp_path: Path) -> None:
@@ -191,6 +221,90 @@ def test_pipeline_security_parses_false_strings(
 
 
 @pytest.mark.parametrize(
+    ("events_config", "expected_interval", "expected_absence"),
+    [
+        ({}, 1800.0, 2.0),
+        (
+            {
+                "cat_presence": {
+                    "repeat_interval_seconds": 600,
+                    "absence_confirm_seconds": 3,
+                }
+            },
+            600.0,
+            3.0,
+        ),
+        (
+            {
+                "pass_event_interval_seconds": 900,
+                "pass_event_absence_confirm_seconds": 4,
+            },
+            900.0,
+            4.0,
+        ),
+    ],
+)
+def test_cat_presence_config_defaults_and_legacy_aliases(
+    monkeypatch,
+    tmp_path: Path,
+    events_config: dict,
+    expected_interval: float,
+    expected_absence: float,
+) -> None:
+    class FakeModel:
+        def __init__(self, model_path, **kwargs) -> None:
+            pass
+
+    monkeypatch.setattr(pipeline_module, "CatDetector", FakeModel)
+    monkeypatch.setattr(pipeline_module, "CoatClassifier", FakeModel)
+
+    pipeline = RealtimePipeline.from_configs(
+        models_config={
+            "detection_model": "detector.onnx",
+            "coat_classifier_model": "coat.onnx",
+            "security": {"require_sha256": False},
+        },
+        pipeline_config={"events": events_config},
+        output_dir=tmp_path,
+    )
+
+    assert pipeline.config.pass_event_interval_seconds == expected_interval
+    assert pipeline.config.pass_absence_confirm_seconds == expected_absence
+
+
+def test_cat_presence_parses_household_interval_overrides(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FakeModel:
+        def __init__(self, model_path, **kwargs) -> None:
+            pass
+
+    monkeypatch.setattr(pipeline_module, "CatDetector", FakeModel)
+    monkeypatch.setattr(pipeline_module, "CoatClassifier", FakeModel)
+
+    pipeline = RealtimePipeline.from_configs(
+        models_config={
+            "detection_model": "detector.onnx",
+            "coat_classifier_model": "coat.onnx",
+            "security": {"require_sha256": False},
+        },
+        pipeline_config={
+            "events": {
+                "cat_presence": {
+                    "household_repeat_interval_seconds": {
+                        " home_a ": "600",
+                    }
+                }
+            }
+        },
+        output_dir=tmp_path,
+    )
+
+    assert pipeline.config.pass_event_intervals_by_household == {"home_a": 600.0}
+
+
+@pytest.mark.parametrize(
     ("pipeline_config", "field_name"),
     [
         ({"coat": {"confidence": False}}, "coat.confidence"),
@@ -199,6 +313,28 @@ def test_pipeline_security_parses_false_strings(
             "association.ambiguity_margin",
         ),
         ({"events": {"event_confirm_ratio": False}}, "events.event_confirm_ratio"),
+        (
+            {"events": {"cat_presence": {"repeat_interval_seconds": False}}},
+            "events.cat_presence.repeat_interval_seconds",
+        ),
+        (
+            {"events": {"cat_presence": {"repeat_interval_seconds": 0}}},
+            "events.cat_presence.repeat_interval_seconds",
+        ),
+        (
+            {"events": {"cat_presence": {"absence_confirm_seconds": -0.1}}},
+            "events.cat_presence.absence_confirm_seconds",
+        ),
+        (
+            {
+                "events": {
+                    "cat_presence": {
+                        "household_repeat_interval_seconds": {"home_a": False}
+                    }
+                }
+            },
+            "events.cat_presence.household_repeat_interval_seconds.home_a",
+        ),
         (
             {"events": {"min_identity_observations": True}},
             "events.min_identity_observations",
@@ -212,6 +348,30 @@ def test_pipeline_security_parses_false_strings(
         ({"pose": {"keypoint_confidence": 1.1}}, "pose.keypoint_confidence"),
         ({"pose": {"min_cat_area": -1}}, "pose.min_cat_area"),
         ({"pose": {"max_instances_per_frame": 0}}, "pose.max_instances_per_frame"),
+        (
+            {"pose": {"posture": {"enabled": "sometimes"}}},
+            "pose.posture.enabled",
+        ),
+        (
+            {"pose": {"posture": {"min_keypoint_confidence": False}}},
+            "pose.posture.min_keypoint_confidence",
+        ),
+        (
+            {"pose": {"posture": {"min_visible_keypoints": True}}},
+            "pose.posture.min_visible_keypoints",
+        ),
+        (
+            {"pose": {"posture": {"transition_confirm_seconds": -0.1}}},
+            "posture.transition_confirm_seconds",
+        ),
+        (
+            {
+                "pose": {
+                    "posture": {"max_anonymous_subjects_per_source": 0}
+                }
+            },
+            "posture.max_anonymous_subjects_per_source",
+        ),
         (
             {"pose": {"quality": {"enabled": "sometimes"}}},
             "pose.quality.enabled",

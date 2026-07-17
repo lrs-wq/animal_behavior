@@ -441,6 +441,12 @@ def cat_pose_label(cat: Any, visibility_threshold: float) -> str:
         f"raw={'ok' if raw_pose is not None else 'missing'}:{raw_visible}",
         f"filt={'ok' if filtered_pose is not None else 'missing'}:{filtered_visible}",
     ]
+    posture = getattr(cat, "posture", "")
+    observed_posture = getattr(cat, "observed_posture", "")
+    if posture:
+        parts.append(f"posture={posture}")
+    if observed_posture and observed_posture != posture:
+        parts.append(f"observed={observed_posture}")
     if held or dropped:
         parts.append(f"held/drop={held}/{dropped}")
     if rejection:
@@ -509,6 +515,19 @@ def accumulate_pose_frame(
         result["pose_dropped_keypoints"] += int(
             getattr(cat, "pose_dropped_keypoints", 0)
         )
+        observed_posture = getattr(cat, "observed_posture", "")
+        if observed_posture:
+            observation_counts = result.setdefault(
+                "posture_observation_counts",
+                {},
+            )
+            observation_counts[observed_posture] = (
+                observation_counts.get(observed_posture, 0) + 1
+            )
+        posture = getattr(cat, "posture", "")
+        if posture:
+            state_counts = result.setdefault("posture_state_counts", {})
+            state_counts[posture] = state_counts.get(posture, 0) + 1
 
         stability.observe(
             source_id=source_id,
@@ -698,6 +717,12 @@ def batch_pose_diagnostics(
             "pose_rejection_codes": merge_count_maps(
                 results, "pose_rejection_codes"
             ),
+            "posture_observation_counts": merge_count_maps(
+                results, "posture_observation_counts"
+            ),
+            "posture_state_counts": merge_count_maps(
+                results, "posture_state_counts"
+            ),
             "stability": stability.summary(),
         }
     )
@@ -749,6 +774,9 @@ def main() -> int:
     )
     source_specs = pipeline.select_source_specs()
     summary["pose_enabled"] = pipeline.config.pose_enabled
+    summary["posture_enabled"] = (
+        pipeline.config.pose_enabled and pipeline.config.posture.enabled
+    )
     summary["status"] = "running"
     atomic_write_json(output_root / "batch_summary.json", summary)
 
@@ -782,6 +810,8 @@ def main() -> int:
             "filtered_pose_visible_keypoints": 0,
             "pose_status_counts": {},
             "pose_rejection_codes": {},
+            "posture_observation_counts": {},
+            "posture_state_counts": {},
             "pose_held_keypoints": 0,
             "pose_dropped_keypoints": 0,
             "tracked_cat_instances": 0,

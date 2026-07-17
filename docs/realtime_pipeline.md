@@ -23,7 +23,8 @@ D:\Anaconda3\envs\yolo\python.exe -m eating_behavior.main --source D:\path\to\vi
   -> 原始 cat 框 -> 毛色分类、身份判断、feeding_head 关联和事件状态机
   -> 原始 cat 框 -> source 内 track -> bbox 平滑 -> RTMPose
   -> 姿态质量/几何门控 -> 按 (source_id, track_id) 做关键点时序滤波
-  -> 猫经过/猫吃饭/余粮监控事件写入 announcement_events
+  -> 吃饭/趴卧/站立/蹲姿分类与姿态变化确认
+  -> 猫出现提醒/猫吃饭/姿态变化/余粮监控事件写入 announcement_events
 ```
 
 ## 检测、跟踪与姿态边界
@@ -37,7 +38,7 @@ NMS 后的 cat 框有两条用途不同的分支：
 
 这里的 `track_id` 只是同一路视频会话内的姿态时序键，不是猫身份。匹配结合 IoU、中心距离和短时运动预测；候选近似并列时不继承旧 track，避免把一只猫的关键点历史带给另一只猫。视频会话结束、时间戳回退或 track 过期后，相应状态会清理。
 
-RTMPose 原始输出先经过置信度滞回、bbox 面积/短边、关键点边界、AP-10K 骨架连通性与骨长等质量/几何门控。通过门控的坐标在 bbox 局部坐标系中按 `(source_id, track_id)` 使用 One Euro 滤波；短暂缺点可按关键点类型有限 hold 并衰减置信度，超过桥接时间或 reset 间隔后不再沿用历史。该链路只改变对外姿态结果，不会把姿态分数、平滑框或 track 写入身份、进食关联和事件证据。
+RTMPose 原始输出先经过置信度滞回、bbox 面积/短边、关键点边界、AP-10K 骨架连通性与骨长等质量/几何门控。通过门控的坐标在 bbox 局部坐标系中按 `(source_id, track_id)` 使用 One Euro 滤波；短暂缺点可按关键点类型有限 hold 并衰减置信度，超过桥接时间或 reset 间隔后不再沿用历史。过滤后的关键点只参与新增的姿态变化事件，不会把姿态分数、平滑框或 track 写入身份和原有进食事件证据，因此不改变原有身份与 `cat_eating` 语义。
 
 主要配置键位于 `configs/pipeline.yaml`：
 
@@ -97,11 +98,41 @@ outputs/realtime/announcement_events.csv
 
 | event_type | 说明 |
 | --- | --- |
-| `cat_passed` | 检测到猫经过 |
+| `cat_passed` | 兼容事件名：画面出现任意猫及持续在场周期提醒 |
 | `cat_eating` | 检测到猫正在吃饭 |
+| `cat_posture_changed` | 首次确认姿态或姿态在 eating / lying / standing / crouching 之间变化 |
 | `bowl_food_status` | 碗内余粮监控占位事件，后续补充 |
 
-`cat_passed` 和 `cat_eating` 都会输出 `cat_name`。如果当前无法确认身份，`cat_name` 输出为空字符串，内部诊断信息仍保留 `identity_method`、`identity_reason` 和候选猫列表。
+`cat_passed`、`cat_eating` 和 `cat_posture_changed` 都会输出 `cat_name`。如果当前无法确认身份，`cat_name` 输出为空字符串，内部诊断信息仍保留 `identity_method`、`identity_reason` 和候选猫列表。
+
+姿态状态优先按 `(source_id, household_id, cat_name)` 保存；身份尚未确认时只在当前视频会话内按 `track_id` 暂存，不能把一个新 Track 猜成之前的未知猫。可信姿态需要持续满足 `transition_confirm_seconds` 和 `min_confirmed_observations` 才提交。首次可信姿态生成一条事件，之后只有姿态变化才生成；无猫、`held`、`missing`、`rejected` 或姿态推理失败都不会写成 `unknown/absent`，而是保留上一次已确认状态。
+
+`FrameAnalysis.posture_states` 独立返回保留状态，因此无猫帧即使 `FrameAnalysis.cats` 为空，仍能看到上一次姿态且 `visible=false`。已确认身份的状态会跨媒体重连保留；匿名 Track 状态在视频会话结束时清理。`cat_posture_changed` 写入成功后才提交新状态；写入失败只记录限频告警，冻结后的事件信封会复用同一个 `record_id`、时间和证据，在后续帧（包括无猫帧）重试。已确认身份的待提交转换跨断流保留；匿名 Track 清理后只保留有界的内存待发信封。JSONL 或 CSV 其中一个已经写入时，同一个 Recorder 实例内的待提交重试只补尚未完成的文件。底层追加由跨进程文件锁串行化：半条写入失败时只在持锁期间回滚本次残片；完整写入后外层才报错时则按冻结记录校验，确认已存在后不重复追加。所有 JSONL 事件顶层都带 `record_id`，CSV 在 `details_json._record_id` 输出同一值。近期重复调用也会按 `record_id` 幂等，但完成记录索引是有界内存，不是跨进程数据库；进程重启后的待发状态恢复尚未实现，下游仍应按 `record_id` 幂等消费。
+
+`eating` 姿态必须同时有可靠关键点和无歧义的 `feeding_head -> cat` 关联，不能只凭低头判断。`cat_posture_changed(posture=eating)` 是即时姿态变化；原有 `cat_eating` 是经过进入/退出门控后形成的完整进食区间事件，两者可以由下游按用途分别消费。
+
+`cat_passed` 按 `(household_id, source_id)` 维护画面级在场状态，不按逐帧猫名、毛色或姿态 `track_id` 分桶。同一帧有多只猫也只生成一条提醒：
+
+```text
+首次检测到任意猫 -> 立即提醒
+持续有猫在画面 -> 到 repeat_interval_seconds 时补充提醒
+画面没有猫 -> 暂停提醒
+重新出现且周期已到 -> 立即提醒
+重新出现但周期未到 -> 周期到期且仍有猫时补充提醒
+```
+
+短于 `absence_confirm_seconds` 的检测缺口仍视为同一次在场。默认配置以及可选的用户/家庭覆盖值：
+
+```yaml
+events:
+  cat_presence:
+    repeat_interval_seconds: 1800.0
+    absence_confirm_seconds: 2.0
+    household_repeat_interval_seconds:
+      customer_a_home: 900.0
+```
+
+事件写入成功后才消费本次提醒周期；文件写入失败时，下一帧仍可重试。当前保持 `cat_passed` / `message_key=cat_passed`，避免破坏既有消费端，事件 `details.semantics` 为 `any_cat_presence_reminder`。
 
 `cat_eating` 的身份判断顺序：
 

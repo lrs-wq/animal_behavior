@@ -2,7 +2,7 @@
 
 姿态链路采用 top-down 方式：YOLO 输出先由项目侧显式执行同类 NMS；NMS 后的 `cat` 框在各自 `source_id` 内做短时关联和 bbox 平滑，RTMPose 再把同一帧内符合面积限制的平滑猫框组成一个批次，输出 AP-10K 的 17 个关键点。原始姿态随后经过质量/几何门控和按 `(source_id, track_id)` 隔离的关键点时序滤波。
 
-平滑 bbox 只用于姿态 crop。毛色、身份、`feeding_head` 关联、进食状态机和事件记录仍使用 NMS 后但未平滑的检测框，也不会使用姿态分数、姿态状态或 `track_id` 作为证据，因此不会改变既有身份和事件语义。
+平滑 bbox 只用于姿态 crop。毛色、身份、`feeding_head` 关联和原有进食状态机仍使用 NMS 后但未平滑的检测框。过滤后的关键点只用于新增的 `cat_posture_changed` 事件，不会作为身份或原有 `cat_eating` 的证据，因此不会改变既有身份和进食事件语义。
 
 ## 依赖
 
@@ -79,13 +79,28 @@ pose:
     core_hold_frames: 3
     joint_hold_frames: 2
     paw_hold_frames: 2
+  posture:
+    enabled: true
+    min_keypoint_confidence: 0.35
+    min_feeding_confidence: 0.50
+    min_visible_keypoints: 5
+    lying_max_clearance_ratio: 0.10
+    crouching_min_clearance_ratio: 0.10
+    crouching_max_clearance_ratio: 0.22
+    standing_min_clearance_ratio: 0.20
+    standing_min_leg_straightness: 0.78
+    transition_confirm_seconds: 0.50
+    min_confirmed_observations: 3
+    max_anonymous_subjects_per_source: 64
 ```
 
-`tracking` 状态按 `source_id` 隔离。匹配歧义、track 超时、视频会话结束或时间戳回退时不会继续继承旧姿态历史。bbox EMA 的时间尺度由 `bbox_smoothing_seconds` 控制，输出只写入每只猫的 `pose_detection`。
+`tracking` 状态按 `source_id` 隔离。匹配歧义、track 超时、视频会话结束或时间戳回退时不会继续继承旧姿态历史。bbox EMA 的时间尺度由 `bbox_smoothing_seconds` 控制，输出只写入每只猫的 `pose_detection`。`max_anonymous_subjects_per_source` 同时限制匿名姿态状态、历史 Track 别名和匿名会话结束后的待发事件信封，避免长期视频流或持续写入故障导致无界占用内存。
 
 `pose.quality.enabled` 是质量门控和时序滤波的总开关。新 track 使用 `*_enter` 阈值，已有 track 使用较低的 `*_keep` 阈值以减少遮挡造成的闪烁；门控还会检查帧/bbox 边界、AP-10K 骨架连接、锚点和骨长。通过门控的关键点在 bbox 局部坐标中使用 One Euro 滤波，避免普通 bbox 平移被误判成关键点跳变。短时缺失按核心点、关节和爪部各自的 `*_hold_frames` 有限补点并降低置信度；`max_bridge_gap_seconds` 之后停止桥接，`reset_gap_seconds` 之后丢弃该 track 的滤波状态。
 
 如果 `pose.quality.enabled` 为 `false`，`raw_pose` 会原样作为 `pose` 返回；如果 `tracking.enabled` 为 `false`，姿态使用当前 cat 框并且没有可复用的 track 历史。
+
+姿态类别目前是 AP-10K 几何规则，不是额外的学习式分类模型：趴卧、站立和蹲姿使用 bbox 归一化后的躯干长度、前后腿下落、爪到躯干间距和腿链直度；吃饭还必须有无歧义的 `feeding_head -> cat` 关联，单纯低头不会判成吃饭。只有 `accepted`（质量门控关闭时为 `raw`）可以推进状态，`held`、`missing`、`rejected` 和推理异常只保留旧状态。几何阈值需要继续用本机位的 05 标注回放校准，若需要更高泛化能力应补姿态类别标注并训练独立分类器。
 
 `.pth` 使用 pickle 反序列化，MMEngine 也会执行 `.py` 配置；两者都属于代码执行边界。即使全局 `require_sha256` 被关闭，启用姿态时仍强制要求这两个文件各自的 SHA256 和 `allowed_roots`。
 
@@ -103,10 +118,14 @@ pose:
 - `CatFrameAnalysis.pose_status`：`raw`、`missing`、`accepted`、`held` 或 `rejected`；
 - `CatFrameAnalysis.pose_rejection_code`：拒绝或 hold 的有界原因码；
 - `CatFrameAnalysis.pose_held_keypoints` / `pose_dropped_keypoints`：本实例补点和丢点计数；
+- `CatFrameAnalysis.observed_posture`：本帧可靠几何分类结果，无法分类时为空；
+- `CatFrameAnalysis.posture` / `posture_label`：该猫已提交的英文/中文姿态状态；
+- `CatFrameAnalysis.posture_confidence` / `posture_subject_key`：已提交状态置信度和隔离键；
 - `FrameAnalysis.poses`：所有非空 `CatFrameAnalysis.pose` 的便捷集合；
 - `FrameAnalysis.pose_error_code`：可恢复的单帧姿态错误；
+- `FrameAnalysis.posture_states`：包括当前消失猫在内的已确认姿态快照，`visible=false` 时状态不变；
 - `FrameAnalysis.eating_state`：本帧更新后的进食状态。
 
-`raw_pose` 仅用于比较模型原始输出与稳定化结果，不能用于身份、进食关联或事件判定。`finish_source()` 会同时清理该 source 的 tracker 和关键点滤波状态，防止不同媒体会话复用历史。
+`raw_pose` 仅用于比较模型原始输出与稳定化结果，不能用于身份、原有进食关联或姿态事件判定。`finish_source()` 会清理该 source 的 tracker、关键点滤波和匿名 Track 姿态状态，防止不同媒体会话复用临时身份；已经确认 `cat_name` 的最后姿态会保留，重连后同姿态不会再次生成初始事件。进程重启后的状态恢复不在当前实现内。
 
 批量测试工具会在输出视频中画出骨架与关键点，并在 `batch_summary.json` 记录姿态帧数、实例数、可见关键点数和错误计数。

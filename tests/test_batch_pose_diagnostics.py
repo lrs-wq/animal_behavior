@@ -34,6 +34,8 @@ def empty_result() -> dict:
         "filtered_pose_visible_keypoints": 0,
         "pose_status_counts": {},
         "pose_rejection_codes": {},
+        "posture_observation_counts": {},
+        "posture_state_counts": {},
         "pose_held_keypoints": 0,
         "pose_dropped_keypoints": 0,
         "tracked_cat_instances": 0,
@@ -125,6 +127,8 @@ def test_accumulate_pose_frame_preserves_legacy_filtered_counters() -> None:
         pose_rejection_code="geometry",
         pose_held_keypoints=2,
         pose_dropped_keypoints=3,
+        observed_posture="standing",
+        posture="crouching",
     )
     result = empty_result()
     diagnostics = PoseStabilityDiagnostics(0.3)
@@ -150,11 +154,15 @@ def test_accumulate_pose_frame_preserves_legacy_filtered_counters() -> None:
     assert result["pose_rejection_codes"] == {"geometry": 1}
     assert result["pose_held_keypoints"] == 2
     assert result["pose_dropped_keypoints"] == 3
+    assert result["posture_observation_counts"] == {"standing": 1}
+    assert result["posture_state_counts"] == {"crouching": 1}
     assert result["tracked_cat_instances"] == 1
     assert track_ids == {12}
     assert "track=12" in labels[detection]
     assert "pose=held" in labels[detection]
     assert "reject=geometry" in labels[detection]
+    assert "posture=crouching" in labels[detection]
+    assert "observed=standing" in labels[detection]
 
 
 def test_old_cat_analysis_shape_falls_back_to_filtered_pose() -> None:
@@ -186,6 +194,8 @@ def test_batch_pose_diagnostics_merges_per_video_counters() -> None:
         filtered_pose_instances=1,
         pose_status_counts={"accepted": 1, "rejected": 1},
         pose_rejection_codes={"geometry": 1},
+        posture_observation_counts={"standing": 1},
+        posture_state_counts={"crouching": 1},
         track_ids=[1, 2],
     )
     second.update(
@@ -193,6 +203,8 @@ def test_batch_pose_diagnostics_merges_per_video_counters() -> None:
         filtered_pose_instances=2,
         pose_status_counts={"accepted": 2},
         pose_rejection_codes={},
+        posture_observation_counts={"standing": 2},
+        posture_state_counts={"standing": 2},
         track_ids=[1],
     )
 
@@ -205,3 +217,5 @@ def test_batch_pose_diagnostics_merges_per_video_counters() -> None:
     assert summary["unique_source_track_count"] == 3
     assert summary["pose_status_counts"] == {"accepted": 3, "rejected": 1}
     assert summary["pose_rejection_codes"] == {"geometry": 1}
+    assert summary["posture_observation_counts"] == {"standing": 3}
+    assert summary["posture_state_counts"] == {"crouching": 1, "standing": 2}

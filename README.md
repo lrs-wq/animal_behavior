@@ -19,13 +19,15 @@
   -> 如果该毛色在用户家庭中只有一只猫，直接确认身份并结束身份分支
   -> 如果该毛色存在多只猫，进入身份确认/Re-ID 分支
   -> 同步做 feeding_head 吃饭检测
+  -> RTMPose 关键点质量门控与姿态状态判定
   -> 记录可播报事件
 ```
 
 当前需要记录的可播报事件：
 
-- `cat_passed`：猫咪经过，附带猫咪身份；无法确认身份时 `cat_name` 留空。
+- `cat_passed`：兼容事件名，实际语义是画面内出现任意猫以及持续在场的周期提醒；默认每 30 分钟最多提醒一次，无法确认身份时 `cat_name` 留空。
 - `cat_eating`：猫咪吃饭，附带猫咪身份；当前帧无法确认时参考最近身份时间线，仍无法确认则 `cat_name` 留空。
+- `cat_posture_changed`：猫咪首次确认姿态或在吃饭、趴卧、站立、蹲姿之间切换；同一姿态不重复记录，猫消失或姿态质量不足时保留上一次状态。
 - `bowl_food_status`：碗内余粮监控占位，后续补充具体模型和规则。
 
 播报方式暂不在第一版实现中固定，当前只负责把事件结构化记录到文件，后续可以接语音、App 推送、WebSocket 或其他消费端。
@@ -276,7 +278,7 @@ coat_class -> candidate cats
 
 后续可扩展：
 
-- 路过猫咪身份识别。
+- 猫出现事件的整猫身份识别。
 - 品种/外观类型分流。
 - 多猫切换事件切分。
 - 评估报告自动生成。
@@ -406,7 +408,7 @@ event_confirm_ratio >= 0.60
 cat_name = unknown
 ```
 
-这里的 `unknown` 是内部识别状态，用于诊断、评估和阈值策略。对外可播报事件 `cat_passed` / `cat_eating` 的 `cat_name` 字段在无法确认身份时输出为空字符串。
+这里的 `unknown` 是内部识别状态，用于诊断、评估和阈值策略。对外可播报事件 `cat_passed` / `cat_eating` / `cat_posture_changed` 的 `cat_name` 字段在无法确认身份时输出为空字符串。
 
 高相似猫，如银渐层、蓝猫、狸花、美短虎斑，应使用更严格的 margin 和 unknown 策略。
 
@@ -418,10 +420,10 @@ cat_name = unknown
 feeding_head -> head_gallery -> eating identity
 ```
 
-后续扩展路过身份识别：
+后续扩展出现事件的整猫身份识别：
 
 ```text
-cat / side_body -> body_gallery -> passing identity
+cat / side_body -> body_gallery -> presence identity
 ```
 
 不要把低头吃饭猫头、整猫侧身、背部花纹全部混进同一个图库。正式项目保留双图库设计：
@@ -506,7 +508,7 @@ final_score =
 该分支适合：
 
 - 狸花、虎斑、美短虎斑、三花、玳瑁、双色带明显花纹的猫。
-- 路过身份识别。
+- 猫出现事件的整猫身份识别。
 - 侧身、背部、额头纹路清晰可见的画面。
 - 同花色多猫家庭中的辅助区分。
 

@@ -52,6 +52,29 @@ pose:
     core_hold_frames: 3
     joint_hold_frames: 2
     paw_hold_frames: 2
+  posture:
+    # This geometry classifier is active only when pose.enabled is also true.
+    # ``eating`` additionally requires an unambiguous feeding_head association;
+    # a lowered head alone is not treated as eating.
+    enabled: true
+    min_keypoint_confidence: 0.35
+    min_feeding_confidence: 0.50
+    min_visible_keypoints: 5
+    min_body_length_ratio: 0.12
+    min_supporting_paws: 2
+    min_complete_leg_chains: 1
+    lying_max_clearance_ratio: 0.10
+    crouching_min_clearance_ratio: 0.10
+    crouching_max_clearance_ratio: 0.22
+    standing_min_front_drop_ratio: 0.18
+    standing_min_hind_drop_ratio: 0.15
+    standing_min_clearance_ratio: 0.20
+    standing_min_leg_straightness: 0.78
+    # A candidate must remain stable before cat_posture_changed is committed.
+    transition_confirm_seconds: 0.50
+    min_confirmed_observations: 3
+    # Bound unknown-cat state, historical aliases, and orphaned retry envelopes.
+    max_anonymous_subjects_per_source: 64
 
 tracking:
   # Tracking is source-local. Smoothed boxes are used only for pose crops; raw
@@ -130,8 +153,20 @@ events:
   max_identity_candidates: 32
   # Do not publish a real-looking food-status event until that model exists.
   emit_bowl_placeholder: false
-  # Event throttling intervals are scoped by source_id.
-  pass_event_interval_seconds: 5.0
+  # ``cat_passed`` is kept as the public compatibility name for an any-cat
+  # presence reminder. The first visible frame is announced immediately;
+  # reminders repeat only while a cat is visible. User-specific config
+  # snapshots can override the default 30-minute interval.
+  cat_presence:
+    repeat_interval_seconds: 1800.0
+    # Ignore shorter detector gaps when deciding whether the cat disappeared.
+    absence_confirm_seconds: 2.0
+    # Optional per-user/household overrides; source ownership still determines
+    # which household setting is used.
+    household_repeat_interval_seconds: {}
+    # Example:
+    # household_repeat_interval_seconds:
+    #   customer_a_home: 900.0
   # Kept for backward-compatible configs; completed eating events are emitted
   # once by the state machine rather than periodically throttled observations.
   eating_event_interval_seconds: 2.0
