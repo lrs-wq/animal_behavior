@@ -1,0 +1,15 @@
+# Keep repository text deterministic across Linux and Windows checkouts.
+* text=auto eol=lf
+
+# Binary model and media artifacts must never be line-ending normalized.
+*.engine binary
+*.gif binary
+*.jpeg binary
+*.jpg binary
+*.onnx binary
+*.png binary
+*.pt binary
+*.pth binary
+*.wandb binary
+*.webp binary
+*.zip binary

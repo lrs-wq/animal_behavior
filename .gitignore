@@ -13,12 +13,28 @@ venv/
 env/
 
 outputs/
-data/
+# Local datasets may be a directory or an absolute-path symlink.
+/data
+
+# Python package/build metadata.
+*.egg-info/
+build/
+dist/
+
+# Model artifacts are promoted to models/ out of band and pinned by SHA-256.
 *.pt
+*.pth
 *.onnx
 *.engine
 *.npz
 *.npy
+
+# Local training, prediction, tuning and experiment output.
+/training/*.generated.yaml
+/training/predictions/
+/training/runs*/
+/training/wandb/
+/wandb/
 
 *.log
 .DS_Store
