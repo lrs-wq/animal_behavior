@@ -27,7 +27,7 @@ from eating_behavior.config import load_yaml
 from eating_behavior.identity import IdentityDecision
 from eating_behavior.media import SourceSpec, iter_frames
 from eating_behavior.models import CoatPrediction, Detection
-from eating_behavior.pipeline import RealtimePipeline, event_cat_name, is_named_class
+from eating_behavior.pipeline import RealtimePipeline, is_named_class
 from eating_behavior.pose import PosePrediction, draw_pose_predictions
 
 
@@ -411,47 +411,14 @@ def draw_text(
 
 
 def cat_pose_label(cat: Any, visibility_threshold: float) -> str:
-    """Build a compact overlay label for tracking and pose-filter state."""
-    track_id = getattr(cat, "track_id", None)
-    filtered_pose = getattr(cat, "pose", None)
-    raw_pose = (
-        getattr(cat, "raw_pose")
-        if hasattr(cat, "raw_pose")
-        else filtered_pose
+    """Build the user-facing posture label without operational diagnostics."""
+    del visibility_threshold
+    posture = (
+        getattr(cat, "posture", "")
+        or getattr(cat, "observed_posture", "")
+        or "unknown"
     )
-    status = getattr(cat, "pose_status", "") or (
-        "raw" if raw_pose is not None else "missing"
-    )
-    rejection = getattr(cat, "pose_rejection_code", "")
-    held = int(getattr(cat, "pose_held_keypoints", 0))
-    dropped = int(getattr(cat, "pose_dropped_keypoints", 0))
-    raw_visible = (
-        raw_pose.visible_keypoint_count(visibility_threshold)
-        if raw_pose is not None
-        else 0
-    )
-    filtered_visible = (
-        filtered_pose.visible_keypoint_count(visibility_threshold)
-        if filtered_pose is not None
-        else 0
-    )
-    parts = [
-        f"track={track_id if track_id is not None else '-'}",
-        f"pose={status}",
-        f"raw={'ok' if raw_pose is not None else 'missing'}:{raw_visible}",
-        f"filt={'ok' if filtered_pose is not None else 'missing'}:{filtered_visible}",
-    ]
-    posture = getattr(cat, "posture", "")
-    observed_posture = getattr(cat, "observed_posture", "")
-    if posture:
-        parts.append(f"posture={posture}")
-    if observed_posture and observed_posture != posture:
-        parts.append(f"observed={observed_posture}")
-    if held or dropped:
-        parts.append(f"held/drop={held}/{dropped}")
-    if rejection:
-        parts.append(f"reject={rejection}")
-    return " ".join(parts)
+    return f"posture={posture}"
 
 
 def accumulate_pose_frame(
@@ -578,17 +545,13 @@ def render_frame(
     for detection in detections:
         if is_named_class(detection, cat_classes):
             color = (40, 190, 40)
-            _, coat, identity = cat_by_detection[detection]
-            confirmed_name = event_cat_name(identity) or "unknown"
-            margin = coat.confidence - coat.second_confidence
-            label = (
-                f"cat {detection.confidence:.2f} coat={coat.class_name} "
-                f"{coat.confidence:.2f}/{margin:.2f} id={confirmed_name}"
+            _, coat, _ = cat_by_detection[detection]
+            posture_label = (
+                cat_pose_labels.get(detection, "posture=unknown")
+                if cat_pose_labels is not None
+                else "posture=unknown"
             )
-            if cat_pose_labels and detection in cat_pose_labels:
-                # Put operational diagnostics first so track/status remain
-                # visible even when a long label reaches the frame edge.
-                label = cat_pose_labels[detection] + " " + label
+            label = f"coat={coat.class_name} {posture_label}"
         elif is_named_class(detection, feeding_classes):
             color = (20, 90, 230)
             association = associate_feeding_to_cat(
@@ -597,12 +560,7 @@ def render_frame(
                 max_distance_ratio=association_max_distance_ratio,
                 ambiguity_margin=association_ambiguity_margin,
             )
-            if association is None:
-                association_label = "unassociated"
-            else:
-                association_label = (
-                    event_cat_name(association.identity) or association.coat.class_name
-                )
+            if association is not None:
                 fx1, fy1, fx2, fy2 = detection.xyxy
                 cx1, cy1, cx2, cy2 = association.cat_detection.xyxy
                 cv2.line(
@@ -613,16 +571,14 @@ def render_frame(
                     2,
                     cv2.LINE_AA,
                 )
-            label = f"feeding_head {detection.confidence:.2f} -> {association_label}"
+            label = detection.class_name
         else:
             color = (220, 160, 30)
-            label = f"{detection.class_name} {detection.confidence:.2f}"
+            label = detection.class_name
         x1, y1, x2, y2 = detection.xyxy
         cv2.rectangle(rendered, (x1, y1), (x2, y2), color, 3)
         label_y = max(24, y1)
         draw_text(rendered, label, (x1, label_y), color)
-    header = f"source={source_id} frame={frame_index} t={timestamp_seconds:.2f}s state={eating_state}"
-    draw_text(rendered, header, (12, 30), (35, 35, 35))
     return rendered
 
 

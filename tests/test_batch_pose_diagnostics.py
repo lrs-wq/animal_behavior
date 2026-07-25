@@ -1,14 +1,18 @@
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
-from eating_behavior.models import Detection
+import tools.run_batch_test as batch_module
+from eating_behavior.identity import IdentityDecision
+from eating_behavior.models import CoatPrediction, Detection
 from eating_behavior.pose import PoseKeypoint, PosePrediction
 from tools.run_batch_test import (
     PoseStabilityDiagnostics,
     accumulate_pose_frame,
     batch_pose_diagnostics,
     cat_pose_label,
+    render_frame,
 )
 
 
@@ -158,11 +162,7 @@ def test_accumulate_pose_frame_preserves_legacy_filtered_counters() -> None:
     assert result["posture_state_counts"] == {"crouching": 1}
     assert result["tracked_cat_instances"] == 1
     assert track_ids == {12}
-    assert "track=12" in labels[detection]
-    assert "pose=held" in labels[detection]
-    assert "reject=geometry" in labels[detection]
-    assert "posture=crouching" in labels[detection]
-    assert "observed=standing" in labels[detection]
+    assert labels[detection] == "posture=crouching"
 
 
 def test_old_cat_analysis_shape_falls_back_to_filtered_pose() -> None:
@@ -179,11 +179,55 @@ def test_old_cat_analysis_shape_falls_back_to_filtered_pose() -> None:
         stability=PoseStabilityDiagnostics(0.3),
     )
 
-    assert "track=-" in label
-    assert "pose=raw" in label
+    assert label == "posture=unknown"
     assert result["raw_pose_instances"] == 1
     assert result["filtered_pose_instances"] == 1
     assert result["untracked_cat_instances"] == 1
+
+
+def test_render_frame_only_labels_classification_and_posture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cat = Detection(0, "cat", 0.87, (20, 40, 180, 140))
+    feeding = Detection(1, "feeding_head", 0.82, (60, 60, 90, 90))
+    bowl = Detection(2, "bowl", 0.71, (200, 40, 280, 120))
+    coat = CoatPrediction(0, "blue_cat", 0.93, "orange_cat", 0.04)
+    identity = IdentityDecision(
+        "mimi",
+        "direct_by_single_same_coat",
+        0.99,
+        "test",
+        ("mimi",),
+    )
+    rendered_text: list[str] = []
+    monkeypatch.setattr(
+        batch_module,
+        "draw_text",
+        lambda _frame, text, _origin, _color: rendered_text.append(text),
+    )
+
+    render_frame(
+        np.zeros((160, 320, 3), dtype=np.uint8),
+        (cat, feeding, bowl),
+        ((cat, coat, identity),),
+        (),
+        source_id="camera",
+        frame_index=1,
+        timestamp_seconds=0.0,
+        eating_state="idle",
+        cat_classes={"cat"},
+        feeding_classes={"feeding_head"},
+        association_max_distance_ratio=1.25,
+        association_ambiguity_margin=0.1,
+        pose_keypoint_confidence=0.3,
+        cat_pose_labels={cat: "posture=crouching"},
+    )
+
+    assert rendered_text == [
+        "coat=blue_cat posture=crouching",
+        "feeding_head",
+        "bowl",
+    ]
 
 
 def test_batch_pose_diagnostics_merges_per_video_counters() -> None:
