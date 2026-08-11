@@ -1,0 +1,40 @@
+[Unit]
+Description=JoyAI authenticated live stream viewer
+After=network-online.target joyai-mediamtx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=joyai-viewer
+Group=joyai-viewer
+WorkingDirectory=/opt/joyai-stream-viewer
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/joyai-stream-viewer.env
+ExecStart=/usr/bin/node /opt/joyai-stream-viewer/server.mjs
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+UMask=0077
+LimitNOFILE=65536
+TasksMax=256
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
