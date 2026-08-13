@@ -42,6 +42,20 @@ const streams = Object.freeze([
     playbackUrl:
       "/joyai/stream/live/camera02/?autoplay=true&muted=true&controls=true&playsinline=true",
   },
+  {
+    id: "camera03",
+    name: "摄像头 03",
+    description: "camera03 · 实时画面",
+    playbackUrl:
+      "/joyai/stream/live/camera03/?autoplay=true&muted=true&controls=true&playsinline=true",
+  },
+  {
+    id: "camera04",
+    name: "摄像头 04",
+    description: "camera04 · 实时画面",
+    playbackUrl:
+      "/joyai/stream/live/camera04/?autoplay=true&muted=true&controls=true&playsinline=true",
+  },
 ]);
 
 const loginAttempts = new Map();

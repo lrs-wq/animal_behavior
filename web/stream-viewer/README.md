@@ -7,7 +7,7 @@
 - 单一运维账号登录，不提供注册接口；
 - HttpOnly、Secure、SameSite 会话 Cookie；
 - 登录限速与 scrypt 密码摘要；
-- 登录后同时查看 `camera01`、`camera02`；
+- 登录后同时查看 `camera01`、`camera02`、`camera03`、`camera04`；
 - Nginx `auth_request` 校验播放请求，浏览器无法获得媒体服务凭据；
 - Nginx 直接转发 MediaMTX 低延迟 HLS，Node.js 不承载视频带宽。
 
