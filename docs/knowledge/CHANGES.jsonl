@@ -1,0 +1,6 @@
+{"date":"2026-07-15","type":"feature","summary":"稳定跟踪姿态，并加入真实框模型再训练路径。","areas":["tracking","pose","training"],"source_commit":"b5714df"}
+{"date":"2026-07-17","type":"feature","summary":"加入姿态和在场事件状态机。","areas":["posture","presence","events"],"source_commit":"1d269a1"}
+{"date":"2026-07-25","type":"feature","summary":"简化批量视频叠加标签。","areas":["video-overlay","tools"],"source_commit":"deea31b"}
+{"date":"2026-08-11","type":"feature","summary":"加入带认证的实时视频流查看器。","areas":["viewer","authentication","live-stream"],"source_commit":"c093c3a"}
+{"date":"2026-08-13","type":"feature","summary":"查看器增加 camera03 与 camera04 槽位。","areas":["viewer","multi-camera"],"source_commit":"8eb1a33"}
+{"date":"2026-09-01","type":"feature","summary":"新增 camera02 可选 AI 分析链路：受控姿态模型、每 3 帧一次推理、无录像标注流、白名单状态接口和 Viewer 开关。","areas":["model-governance","live-inference","deployment","viewer"]}

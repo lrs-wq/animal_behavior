@@ -9,6 +9,8 @@ User=joyai-viewer
 Group=joyai-viewer
 WorkingDirectory=/opt/joyai-stream-viewer
 Environment=NODE_ENV=production
+Environment=JOYAI_ANALYSIS_ENABLED=false
+Environment=JOYAI_ANALYSIS_STATUS_PATH=/run/eating-behavior-camera02-ai/status.json
 EnvironmentFile=/etc/joyai-stream-viewer.env
 ExecStart=/usr/bin/node /opt/joyai-stream-viewer/server.mjs
 Restart=on-failure

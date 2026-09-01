@@ -10,14 +10,38 @@ const usernameInput = document.getElementById("username");
 const passwordInput = document.getElementById("password");
 const togglePassword = document.getElementById("togglePassword");
 const logoutButton = document.getElementById("logoutButton");
-const streamGrid = document.getElementById("streamGrid");
-const streamCount = document.getElementById("streamCount");
+const streamList = document.getElementById("streamList");
 const sessionUser = document.getElementById("sessionUser");
 const currentTime = document.getElementById("currentTime");
-const cardTemplate = document.getElementById("streamCardTemplate");
+const playerPanel = document.getElementById("playerPanel");
+const videoFrame = document.getElementById("videoFrame");
+const videoPlaceholder = document.getElementById("videoPlaceholder");
+const streamName = document.getElementById("streamName");
+const streamDescription = document.getElementById("streamDescription");
+const streamHealth = document.getElementById("streamHealth");
+const healthText = streamHealth.querySelector("span:last-child");
+const refreshButton = document.getElementById("refreshButton");
+const fullscreenButton = document.getElementById("fullscreenButton");
+const streamModeSwitch = document.getElementById("streamModeSwitch");
+const modeButtons = [...streamModeSwitch.querySelectorAll("button[data-view-id]")];
+const analysisPanel = document.getElementById("analysisPanel");
+const analysisAvailability = document.getElementById("analysisAvailability");
+const analysisAvailabilityText = analysisAvailability.querySelector("span:last-child");
+const analysisThreshold = document.getElementById("analysisThreshold");
+const analysisPose = document.getElementById("analysisPose");
+const analysisCats = document.getElementById("analysisCats");
+const analysisEating = document.getElementById("analysisEating");
+const analysisPosture = document.getElementById("analysisPosture");
+const analysisLastUpdate = document.getElementById("analysisLastUpdate");
 
 let sessionTimer = null;
 let clockTimer = null;
+let analysisTimer = null;
+let streams = [];
+let selectedStream = null;
+let selectedViewId = "raw";
+let selectionVersion = 0;
+let selectionBusy = false;
 
 async function api(path, options = {}) {
   const response = await fetch(`${BASE_PATH}/api/${path}`, {
@@ -32,9 +56,7 @@ async function api(path, options = {}) {
 
   let data = null;
   const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    data = await response.json();
-  }
+  if (contentType.includes("application/json")) data = await response.json();
   return { response, data };
 }
 
@@ -51,9 +73,60 @@ function setLoginBusy(busy) {
   loginButton.querySelector("span:first-child").textContent = busy ? "正在登录…" : "登录";
 }
 
+function setSelectionBusy(busy) {
+  selectionBusy = busy;
+  for (const button of streamList.querySelectorAll("button")) button.disabled = busy;
+  for (const button of modeButtons) button.disabled = busy;
+}
+
+function stopPlayer() {
+  stopAnalysisPolling();
+  selectionVersion += 1;
+  const frame = videoFrame.querySelector("iframe");
+  if (frame) {
+    frame.src = "about:blank";
+    frame.remove();
+  }
+}
+
+function resetPlayer() {
+  stopPlayer();
+  selectedStream = null;
+  selectedViewId = "raw";
+  streamModeSwitch.classList.add("hidden");
+  analysisPanel.classList.add("hidden");
+  streamName.textContent = "请选择摄像头";
+  streamDescription.textContent = "选择后开始加载实时画面";
+  streamHealth.classList.remove("online", "error");
+  healthText.textContent = "等待选择";
+  refreshButton.disabled = true;
+  fullscreenButton.disabled = true;
+  videoPlaceholder.className = "video-placeholder idle-placeholder";
+  videoPlaceholder.replaceChildren();
+  const icon = document.createElement("span");
+  icon.className = "placeholder-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = "▶";
+  const title = document.createElement("strong");
+  title.textContent = "请选择一路视频";
+  const hint = document.createElement("span");
+  hint.textContent = "左侧选择摄像头后开始播放";
+  videoPlaceholder.append(icon, title, hint);
+  videoPlaceholder.classList.remove("hidden");
+  updateSelectionButtons();
+}
+
+function clearDashboard() {
+  stopPlayer();
+  streams = [];
+  selectedStream = null;
+  streamList.replaceChildren();
+  resetPlayer();
+}
+
 function showLogin(message = "") {
   stopDashboardTimers();
-  clearStreams();
+  clearDashboard();
   setVisible(loginView);
   loginMessage.textContent = message;
   passwordInput.value = "";
@@ -85,95 +158,255 @@ function stopDashboardTimers() {
   if (sessionTimer) window.clearInterval(sessionTimer);
   clockTimer = null;
   sessionTimer = null;
+  stopAnalysisPolling();
 }
 
-function clearStreams() {
-  for (const frame of streamGrid.querySelectorAll("iframe")) {
-    frame.src = "about:blank";
+function stopAnalysisPolling() {
+  if (analysisTimer) window.clearInterval(analysisTimer);
+  analysisTimer = null;
+}
+
+function updateModeControls() {
+  const analysisAvailable = Boolean(selectedStream?.analysisView);
+  streamModeSwitch.classList.toggle("hidden", !analysisAvailable);
+  for (const button of modeButtons) {
+    button.classList.toggle("active", button.dataset.viewId === selectedViewId);
+    button.setAttribute("aria-pressed", String(button.dataset.viewId === selectedViewId));
   }
-  streamGrid.replaceChildren();
-  streamCount.textContent = "0";
+  analysisPanel.classList.toggle(
+    "hidden",
+    !analysisAvailable || selectedViewId !== "analysis",
+  );
 }
 
-function createStreamCard(stream) {
-  const card = cardTemplate.content.firstElementChild.cloneNode(true);
-  const videoFrame = card.querySelector(".video-frame");
-  const placeholder = card.querySelector(".video-placeholder");
-  const health = card.querySelector(".stream-health");
-  const healthText = health.querySelector("span:last-child");
+function eatingStateLabel(value) {
+  const labels = {
+    idle: "未进食",
+    candidate: "疑似进食",
+    eating: "进食中",
+    exiting: "结束确认中",
+  };
+  return labels[value] || value || "未知";
+}
 
-  card.dataset.streamId = stream.id;
-  card.querySelector(".stream-name").textContent = stream.name;
-  card.querySelector(".stream-description").textContent = stream.description;
+function renderAnalysisStatus(status) {
+  const online = status?.available === true;
+  analysisAvailability.classList.toggle("online", online);
+  analysisAvailability.classList.toggle("error", !online);
+  analysisAvailabilityText.textContent = online ? "AI 在线" : "AI 未运行";
+  analysisThreshold.textContent = Number.isFinite(status?.detectionConfidence)
+    ? status.detectionConfidence.toFixed(2)
+    : "0.60";
+  analysisPose.textContent = !online
+    ? "不可用"
+    : status?.poseEnabled
+      ? status.currentPoseInstances > 0
+        ? `已识别 ${status.currentPoseInstances}`
+        : "开启·无可靠姿态"
+      : "关闭";
+  analysisCats.textContent = String(status?.currentCatInstances || 0);
+  analysisEating.textContent = eatingStateLabel(status?.currentEatingState);
+  analysisPosture.textContent = status?.currentPostures?.length
+    ? status.currentPostures.join(" / ")
+    : "无可靠姿态";
+  if (status?.lastFrameAt) {
+    const date = new Date(status.lastFrameAt);
+    analysisLastUpdate.textContent = Number.isNaN(date.getTime())
+      ? "--"
+      : new Intl.DateTimeFormat("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }).format(date);
+  } else {
+    analysisLastUpdate.textContent = "--";
+  }
+}
 
-  function connect() {
-    const oldFrame = videoFrame.querySelector("iframe");
-    if (oldFrame) {
-      oldFrame.src = "about:blank";
-      oldFrame.remove();
+async function refreshAnalysisStatus() {
+  if (selectedViewId !== "analysis" || !selectedStream?.analysisView) return;
+  try {
+    const { response, data } = await api("analysis/status");
+    if (response.status === 401) {
+      showLogin("登录已失效，请重新登录。");
+      return;
     }
+    if (!response.ok) throw new Error("analysis status unavailable");
+    renderAnalysisStatus(data);
+  } catch {
+    renderAnalysisStatus({ available: false, detectionConfidence: 0.6 });
+  }
+}
 
-    placeholder.classList.remove("hidden");
-    health.classList.remove("online", "error");
-    healthText.textContent = "正在连接";
+function startAnalysisPolling() {
+  stopAnalysisPolling();
+  if (selectedViewId !== "analysis" || !selectedStream?.analysisView) return;
+  refreshAnalysisStatus();
+  analysisTimer = window.setInterval(refreshAnalysisStatus, 3000);
+}
 
-    const frame = document.createElement("iframe");
-    frame.className = "stream-player";
-    frame.title = `${stream.name}实时视频`;
-    frame.allow = "autoplay; fullscreen; picture-in-picture";
-    frame.allowFullscreen = true;
-    frame.referrerPolicy = "same-origin";
-    frame.src = `${stream.playbackUrl}&_=${Date.now()}`;
-    frame.addEventListener(
-      "load",
-      () => {
-        placeholder.classList.add("hidden");
-        healthText.textContent = "播放器已连接";
+function updateSelectionButtons() {
+  for (const button of streamList.querySelectorAll("button[data-stream-id]")) {
+    const active = button.dataset.streamId === selectedStream?.id;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    const action = button.querySelector(".selector-action");
+    if (action) action.textContent = active ? "观看中" : "观看";
+  }
+}
 
-        // The MediaMTX player is served from the same origin, so its native
-        // video events provide a more reliable state than iframe load alone.
-        try {
-          const video = frame.contentDocument?.querySelector("video");
-          if (!video) return;
-          video.addEventListener("playing", () => {
-            health.classList.remove("error");
-            health.classList.add("online");
-            healthText.textContent = "直播中";
-          });
-          video.addEventListener("waiting", () => {
-            health.classList.remove("online", "error");
-            healthText.textContent = "缓冲中";
-          });
-          video.addEventListener("error", () => {
-            health.classList.remove("online");
-            health.classList.add("error");
-            healthText.textContent = "视频连接失败";
-          });
-          if (!video.paused && video.readyState >= 2) {
-            health.classList.add("online");
-            healthText.textContent = "直播中";
-          }
-        } catch {
-          // The player still works if a browser restricts iframe inspection.
+function renderStreamList() {
+  streamList.replaceChildren();
+  const fragment = document.createDocumentFragment();
+  for (const stream of streams) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "stream-option";
+    button.dataset.streamId = stream.id;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", "false");
+
+    const indicator = document.createElement("span");
+    indicator.className = "camera-indicator";
+    indicator.setAttribute("aria-hidden", "true");
+    indicator.textContent = "●";
+    const details = document.createElement("span");
+    details.className = "selector-details";
+    const name = document.createElement("strong");
+    name.textContent = stream.name;
+    const description = document.createElement("small");
+    description.textContent = stream.description;
+    details.append(name, description);
+    const action = document.createElement("span");
+    action.className = "selector-action";
+    action.textContent = "观看";
+    button.append(indicator, details, action);
+    button.addEventListener("click", () => selectStream(stream));
+    fragment.append(button);
+  }
+  streamList.append(fragment);
+  updateSelectionButtons();
+}
+
+function showConnecting(stream, description = stream.description) {
+  streamName.textContent = stream.name;
+  streamDescription.textContent = description;
+  streamHealth.classList.remove("online", "error");
+  healthText.textContent = "正在连接";
+  refreshButton.disabled = true;
+  fullscreenButton.disabled = true;
+  videoPlaceholder.className = "video-placeholder";
+  videoPlaceholder.replaceChildren();
+  const spinner = document.createElement("div");
+  spinner.className = "spinner small-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  text.textContent = "正在连接视频流…";
+  videoPlaceholder.append(spinner, text);
+  videoPlaceholder.classList.remove("hidden");
+}
+
+function connectPlayer(stream, playbackUrl, description) {
+  stopPlayer();
+  const version = selectionVersion;
+  showConnecting(stream, description);
+
+  const frame = document.createElement("iframe");
+  frame.className = "stream-player";
+  frame.title = `${stream.name}实时视频`;
+  frame.allow = "autoplay; fullscreen; picture-in-picture";
+  frame.allowFullscreen = true;
+  frame.referrerPolicy = "same-origin";
+  frame.src = `${playbackUrl}&_=${Date.now()}`;
+  frame.addEventListener(
+    "load",
+    () => {
+      if (version !== selectionVersion || selectedStream?.id !== stream.id) return;
+      videoPlaceholder.classList.add("hidden");
+      refreshButton.disabled = false;
+      fullscreenButton.disabled = false;
+      healthText.textContent = "播放器已连接";
+      try {
+        const video = frame.contentDocument?.querySelector("video");
+        if (!video) return;
+        video.addEventListener("playing", () => {
+          if (version !== selectionVersion) return;
+          streamHealth.classList.remove("error");
+          streamHealth.classList.add("online");
+          healthText.textContent = "直播中";
+        });
+        video.addEventListener("waiting", () => {
+          if (version !== selectionVersion) return;
+          streamHealth.classList.remove("online", "error");
+          healthText.textContent = "缓冲中";
+        });
+        video.addEventListener("error", () => {
+          if (version !== selectionVersion) return;
+          streamHealth.classList.remove("online");
+          streamHealth.classList.add("error");
+          healthText.textContent = "视频连接失败";
+        });
+        if (!video.paused && video.readyState >= 2) {
+          streamHealth.classList.add("online");
+          healthText.textContent = "直播中";
         }
-      },
-      { once: true },
-    );
-    videoFrame.append(frame);
+      } catch {
+        // The player remains usable if iframe inspection is restricted.
+      }
+    },
+    { once: true },
+  );
+  videoFrame.append(frame);
+}
+
+async function selectStream(stream, { restore = false, viewId = "raw" } = {}) {
+  if (selectionBusy) return;
+  if (
+    !restore &&
+    selectedStream?.id === stream.id &&
+    selectedViewId === viewId
+  ) {
+    return;
   }
 
-  card.querySelector(".refresh-button").addEventListener("click", connect);
-  card.querySelector(".fullscreen-button").addEventListener("click", async () => {
-    try {
-      await videoFrame.requestFullscreen();
-    } catch {
-      health.classList.add("error");
-      healthText.textContent = "浏览器不允许全屏";
+  stopPlayer();
+  selectedStream = stream;
+  selectedViewId = viewId;
+  updateSelectionButtons();
+  updateModeControls();
+  const requestedDescription =
+    viewId === "analysis" ? stream.analysisView?.description : stream.description;
+  showConnecting(stream, requestedDescription || stream.description);
+  setSelectionBusy(true);
+  try {
+    const { response, data } = await api("select-stream", {
+      method: "POST",
+      body: JSON.stringify({ streamId: stream.id, viewId }),
+    });
+    if (response.status === 401) {
+      showLogin("登录已失效，请重新登录。");
+      return;
     }
-  });
-
-  connect();
-  return card;
+    if (!response.ok || !data?.playbackUrl) {
+      throw new Error(data?.error || "视频选择失败");
+    }
+    selectedViewId = data.selectedViewId || viewId;
+    updateModeControls();
+    connectPlayer(
+      stream,
+      data.playbackUrl,
+      data.viewDescription || requestedDescription || stream.description,
+    );
+    startAnalysisPolling();
+  } catch (error) {
+    streamHealth.classList.add("error");
+    healthText.textContent = error.message || "视频选择失败";
+    videoPlaceholder.classList.remove("hidden");
+  } finally {
+    setSelectionBusy(false);
+    updateSelectionButtons();
+  }
 }
 
 async function showDashboard(session) {
@@ -187,16 +420,21 @@ async function showDashboard(session) {
     return;
   }
   if (!response.ok || !Array.isArray(data?.streams)) {
-    clearStreams();
-    streamGrid.textContent = "视频列表加载失败，请刷新页面重试。";
+    clearDashboard();
+    streamList.textContent = "视频列表加载失败，请刷新页面重试。";
     return;
   }
 
-  clearStreams();
-  streamCount.textContent = String(data.streams.length);
-  const fragment = document.createDocumentFragment();
-  for (const stream of data.streams) fragment.append(createStreamCard(stream));
-  streamGrid.append(fragment);
+  streams = data.streams;
+  resetPlayer();
+  renderStreamList();
+
+  const selectedStreamId = data.selectedStreamId || session.selectedStreamId;
+  const restoredViewId = data.selectedViewId || session.selectedViewId || "raw";
+  const previous = streams.find((stream) => stream.id === selectedStreamId);
+  if (previous) {
+    await selectStream(previous, { restore: true, viewId: restoredViewId });
+  }
 }
 
 async function checkSessionSilently() {
@@ -246,8 +484,31 @@ togglePassword.addEventListener("click", () => {
   passwordInput.focus();
 });
 
+refreshButton.addEventListener("click", () => {
+  if (selectedStream) {
+    selectStream(selectedStream, { restore: true, viewId: selectedViewId });
+  }
+});
+
+for (const button of modeButtons) {
+  button.addEventListener("click", () => {
+    if (!selectedStream || button.dataset.viewId === selectedViewId) return;
+    selectStream(selectedStream, { viewId: button.dataset.viewId });
+  });
+}
+
+fullscreenButton.addEventListener("click", async () => {
+  try {
+    await videoFrame.requestFullscreen();
+  } catch {
+    streamHealth.classList.add("error");
+    healthText.textContent = "浏览器不允许全屏";
+  }
+});
+
 logoutButton.addEventListener("click", async () => {
   logoutButton.disabled = true;
+  stopPlayer();
   try {
     await api("logout", { method: "POST" });
   } finally {
@@ -259,6 +520,7 @@ logoutButton.addEventListener("click", async () => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && !dashboardView.classList.contains("hidden")) {
     checkSessionSilently();
+    refreshAnalysisStatus();
   }
 });
 

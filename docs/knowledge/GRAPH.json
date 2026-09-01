@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "project": "Eating_behavior",
+  "nodes": [
+    {
+      "id": "eating.project",
+      "type": "project",
+      "name": "Eating Behavior",
+      "status": "active",
+      "tags": ["猫咪", "实时推理", "行为识别"],
+      "evidence": "README.md"
+    },
+    {
+      "id": "eating.pipeline.realtime",
+      "type": "pipeline",
+      "name": "正式实时推理流水线",
+      "path": "src/eating_behavior/pipeline.py",
+      "tags": ["video", "stream", "inference"],
+      "evidence": "src/eating_behavior/pipeline.py"
+    },
+    {
+      "id": "eating.source.video",
+      "type": "source",
+      "name": "文件、目录、摄像头或 RTSP/HTTP 视频源",
+      "tags": ["source_id", "camera_id", "stream_url"],
+      "evidence": "README.md"
+    },
+    {
+      "id": "eating.config.pipeline",
+      "type": "config",
+      "name": "流水线与 worker 配置",
+      "path": "configs/pipeline.yaml",
+      "tags": ["sources", "worker", "identity"],
+      "evidence": "configs/pipeline.yaml"
+    },
+    {
+      "id": "eating.config.models",
+      "type": "config",
+      "name": "生产模型注册表",
+      "path": "configs/models.yaml",
+      "tags": ["model", "sha256", "controlled"],
+      "evidence": "configs/models.yaml"
+    },
+    {
+      "id": "eating.model.pose.production",
+      "type": "model",
+      "name": "配置与 checkpoint 双 SHA-256 固定的生产 RTMPose",
+      "path": "configs/models.yaml",
+      "status": "active",
+      "tags": ["RTMPose", "sha256", "out-of-band-weight"],
+      "evidence": "configs/models.yaml"
+    },
+    {
+      "id": "eating.module.detection_tracking",
+      "type": "module",
+      "name": "猫检测、关联与跟踪",
+      "path": "src/eating_behavior/tracking.py",
+      "tags": ["detector", "tracking", "association"],
+      "evidence": "src/eating_behavior/tracking.py"
+    },
+    {
+      "id": "eating.module.identity",
+      "type": "module",
+      "name": "家庭范围内毛色与猫身份判断",
+      "path": "src/eating_behavior/identity.py",
+      "tags": ["source_id", "household_id", "cat_name", "coat_class"],
+      "evidence": "src/eating_behavior/identity.py"
+    },
+    {
+      "id": "eating.rule.identity_scope",
+      "type": "business_rule",
+      "name": "source_id → household_id → household cats 身份作用域",
+      "tags": ["多客户", "隔离", "Re-ID"],
+      "evidence": "README.md"
+    },
+    {
+      "id": "eating.module.pose",
+      "type": "module",
+      "name": "RTMPose 关键点与质量过滤",
+      "path": "src/eating_behavior/pose.py",
+      "tags": ["RTMPose", "keypoints", "quality"],
+      "evidence": "docs/rtmpose_integration.md"
+    },
+    {
+      "id": "eating.module.posture",
+      "type": "module",
+      "name": "吃饭、趴卧、站立与蹲姿状态判断",
+      "path": "src/eating_behavior/posture.py",
+      "tags": ["posture", "state", "pose"],
+      "evidence": "src/eating_behavior/posture.py"
+    },
+    {
+      "id": "eating.module.events",
+      "type": "module",
+      "name": "结构化可播报事件输出",
+      "path": "src/eating_behavior/events.py",
+      "tags": ["events", "JSON", "timeline"],
+      "evidence": "src/eating_behavior/events.py"
+    },
+    {
+      "id": "eating.event.cat_passed",
+      "type": "event",
+      "name": "cat_passed 出现与持续在场事件",
+      "tags": ["presence", "30分钟", "cat_name optional"],
+      "evidence": "README.md"
+    },
+    {
+      "id": "eating.event.cat_eating",
+      "type": "event",
+      "name": "cat_eating 进食事件",
+      "tags": ["eating", "identity", "timeline"],
+      "evidence": "README.md"
+    },
+    {
+      "id": "eating.event.posture_changed",
+      "type": "event",
+      "name": "cat_posture_changed 姿态变化事件",
+      "tags": ["posture", "state-change"],
+      "evidence": "README.md"
+    },
+    {
+      "id": "eating.event.bowl_food_status",
+      "type": "event",
+      "name": "bowl_food_status 余粮监控占位事件",
+      "status": "planned",
+      "tags": ["bowl", "food", "placeholder"],
+      "evidence": "README.md"
+    },
+    {
+      "id": "eating.service.viewer",
+      "type": "service",
+      "name": "认证实时视频查看器",
+      "path": "web/stream-viewer",
+      "tags": ["viewer", "camera", "nodejs", "analysis-feature-flag"],
+      "evidence": "web/stream-viewer/README.md"
+    },
+    {
+      "id": "eating.pipeline.camera02_analysis",
+      "type": "pipeline",
+      "name": "camera02 无录像标注流与白名单状态链路",
+      "path": "tools/run_live_annotated_recording.py",
+      "status": "opt-in",
+      "tags": ["camera02", "inference-interval-3", "RTMP", "no-recording"],
+      "evidence": "deploy/systemd/eating-behavior-camera02-ai-live.service"
+    },
+    {
+      "id": "eating.deployment.systemd",
+      "type": "deployment",
+      "name": "实时推理与查看器 systemd 部署",
+      "path": "deploy/systemd",
+      "tags": ["systemd", "camera", "live"],
+      "evidence": "deploy/systemd/eating-behavior-camera02-ai-live.service"
+    },
+    {
+      "id": "eating.training.offline",
+      "type": "pipeline",
+      "name": "离线训练与模型候选产出",
+      "path": "training",
+      "tags": ["training", "offline", "candidate"],
+      "evidence": "training/README.md"
+    },
+    {
+      "id": "eating.decision.model_promotion",
+      "type": "decision",
+      "name": "训练产物必须评估、受控复制、校验 SHA-256 后显式注册",
+      "status": "accepted",
+      "tags": ["model-governance", "sha256", "production"],
+      "evidence": "README.md"
+    },
+    {
+      "id": "eating.decision.camera02_analysis",
+      "type": "decision",
+      "name": "AI 标注流与原始流隔离并通过默认关闭的 Viewer 开关暴露",
+      "status": "accepted",
+      "tags": ["camera02", "feature-flag", "status-allowlist", "inference-cadence"],
+      "evidence": "docs/knowledge/DECISIONS/0001-camera02-analysis-path.md"
+    }
+  ],
+  "edges": [
+    {
+      "from": "eating.project",
+      "relation": "contains",
+      "to": "eating.pipeline.realtime",
+      "evidence": "README.md"
+    },
+    {
+      "from": "eating.pipeline.realtime",
+      "relation": "consumes",
+      "to": "eating.source.video",
+      "evidence": "src/eating_behavior/main.py"
+    },
+    {
+      "from": "eating.pipeline.realtime",
+      "relation": "reads_config",
+      "to": "eating.config.pipeline",
+      "evidence": "src/eating_behavior/config.py"
+    },
+    {
+      "from": "eating.pipeline.realtime",
+      "relation": "reads_config",
+      "to": "eating.config.models",
+      "evidence": "src/eating_behavior/models.py"
+    },
+    {
+      "from": "eating.pipeline.realtime",
+      "relation": "loads_model",
+      "to": "eating.model.pose.production",
+      "evidence": "configs/models.yaml"
+    },
+    {
+      "from": "eating.pipeline.realtime",
+      "relation": "uses",
+      "to": "eating.module.detection_tracking",
+      "evidence": "src/eating_behavior/pipeline.py"
+    },
+    {
+      "from": "eating.pipeline.realtime",
+      "relation": "uses",
+      "to": "eating.module.identity",
+      "evidence": "src/eating_behavior/pipeline.py"
+    },
+    {
+      "from": "eating.module.identity",
+      "relation": "governed_by",
+      "to": "eating.rule.identity_scope",
+      "evidence": "README.md"
+    },
+    {
+      "from": "eating.pipeline.realtime",
+      "relation": "uses",
+      "to": "eating.module.pose",
+      "evidence": "src/eating_behavior/pipeline.py"
+    },
+    {
+      "from": "eating.module.pose",
+      "relation": "feeds",
+      "to": "eating.module.posture",
+      "evidence": "src/eating_behavior/posture.py"
+    },
+    {
+      "from": "eating.pipeline.realtime",
+      "relation": "produces",
+      "to": "eating.module.events",
+      "evidence": "src/eating_behavior/events.py"
+    },
+    {
+      "from": "eating.module.events",
+      "relation": "emits",
+      "to": "eating.event.cat_passed",
+      "evidence": "README.md"
+    },
+    {
+      "from": "eating.module.events",
+      "relation": "emits",
+      "to": "eating.event.cat_eating",
+      "evidence": "README.md"
+    },
+    {
+      "from": "eating.module.events",
+      "relation": "emits",
+      "to": "eating.event.posture_changed",
+      "evidence": "README.md"
+    },
+    {
+      "from": "eating.module.events",
+      "relation": "plans",
+      "to": "eating.event.bowl_food_status",
+      "evidence": "README.md"
+    },
+    {
+      "from": "eating.service.viewer",
+      "relation": "observes",
+      "to": "eating.pipeline.realtime",
+      "evidence": "web/stream-viewer/README.md"
+    },
+    {
+      "from": "eating.service.viewer",
+      "relation": "observes",
+      "to": "eating.pipeline.camera02_analysis",
+      "evidence": "web/stream-viewer/server.mjs"
+    },
+    {
+      "from": "eating.pipeline.camera02_analysis",
+      "relation": "uses",
+      "to": "eating.pipeline.realtime",
+      "evidence": "tools/run_live_annotated_recording.py"
+    },
+    {
+      "from": "eating.deployment.systemd",
+      "relation": "deploys",
+      "to": "eating.pipeline.realtime",
+      "evidence": "deploy/systemd/eating-behavior-camera02-ai-live.service"
+    },
+    {
+      "from": "eating.deployment.systemd",
+      "relation": "deploys",
+      "to": "eating.pipeline.camera02_analysis",
+      "evidence": "deploy/systemd/eating-behavior-camera02-ai-live.service"
+    },
+    {
+      "from": "eating.deployment.systemd",
+      "relation": "deploys",
+      "to": "eating.service.viewer",
+      "evidence": "web/stream-viewer/deploy/joyai-stream-viewer.service"
+    },
+    {
+      "from": "eating.training.offline",
+      "relation": "produces_candidate_for",
+      "to": "eating.config.models",
+      "evidence": "README.md"
+    },
+    {
+      "from": "eating.config.models",
+      "relation": "governed_by",
+      "to": "eating.decision.model_promotion",
+      "evidence": "README.md"
+    },
+    {
+      "from": "eating.model.pose.production",
+      "relation": "governed_by",
+      "to": "eating.decision.model_promotion",
+      "evidence": "configs/models.yaml"
+    },
+    {
+      "from": "eating.pipeline.camera02_analysis",
+      "relation": "governed_by",
+      "to": "eating.decision.camera02_analysis",
+      "evidence": "docs/knowledge/DECISIONS/0001-camera02-analysis-path.md"
+    },
+    {
+      "from": "eating.service.viewer",
+      "relation": "governed_by",
+      "to": "eating.decision.camera02_analysis",
+      "evidence": "docs/knowledge/DECISIONS/0001-camera02-analysis-path.md"
+    }
+  ]
+}

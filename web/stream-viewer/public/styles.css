@@ -216,7 +216,7 @@ label {
 .field-wrap input {
   width: 100%;
   height: 3.1rem;
-  padding: 0 3.7rem 0 3rem;
+  padding: 0 1rem;
   color: var(--text);
   border: 1px solid rgba(151, 178, 213, 0.2);
   border-radius: 0.85rem;
@@ -225,18 +225,13 @@ label {
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
+#password {
+  padding-right: 3.7rem;
+}
+
 .field-wrap input:focus {
   border-color: rgba(56, 217, 197, 0.72);
   box-shadow: 0 0 0 3px rgba(56, 217, 197, 0.11);
-}
-
-.field-icon {
-  position: absolute;
-  left: 1rem;
-  z-index: 1;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 800;
 }
 
 .text-button {
@@ -404,18 +399,127 @@ button:disabled {
   font-size: 0.8rem;
 }
 
-.stream-grid {
+.viewer-layout {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr);
+  align-items: start;
   gap: clamp(1rem, 2vw, 1.5rem);
 }
 
-.stream-card {
+.stream-selector,
+.player-panel {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 1.15rem;
   background: linear-gradient(160deg, rgba(255, 255, 255, 0.04), transparent 42%), var(--panel-strong);
   box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28);
+}
+
+.stream-selector {
+  position: sticky;
+  top: 1rem;
+}
+
+.selector-heading {
+  padding: 1rem 1rem 0.85rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.selector-heading h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.selector-heading > p:last-child {
+  margin: 0.55rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
+.stream-list {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+}
+
+.stream-option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.82rem 0.78rem;
+  color: #d9e3ef;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 0.78rem;
+  background: rgba(255, 255, 255, 0.025);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.stream-option:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(151, 178, 213, 0.24);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.stream-option.active {
+  border-color: rgba(56, 217, 197, 0.52);
+  background: linear-gradient(110deg, rgba(56, 217, 197, 0.13), rgba(79, 140, 255, 0.08));
+  box-shadow: inset 3px 0 0 var(--cyan);
+}
+
+.camera-indicator {
+  color: #60758e;
+  font-size: 0.65rem;
+  text-shadow: none;
+}
+
+.stream-option.active .camera-indicator {
+  color: var(--cyan);
+  text-shadow: 0 0 9px rgba(56, 217, 197, 0.8);
+}
+
+.selector-details {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.selector-details strong,
+.selector-details small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selector-details strong {
+  font-size: 0.86rem;
+}
+
+.selector-details small {
+  color: var(--muted);
+  font-size: 0.67rem;
+}
+
+.selector-action {
+  padding: 0.26rem 0.42rem;
+  color: #9eb0c5;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  font-size: 0.62rem;
+}
+
+.stream-option.active .selector-action {
+  color: var(--cyan-bright);
+  border-color: rgba(56, 217, 197, 0.32);
+  background: rgba(56, 217, 197, 0.08);
+}
+
+.player-panel {
+  min-width: 0;
 }
 
 .stream-header,
@@ -473,6 +577,38 @@ button:disabled {
   gap: 0.45rem;
 }
 
+.stream-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.stream-mode-switch {
+  display: flex;
+  padding: 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.68rem;
+  background: rgba(2, 8, 15, 0.55);
+}
+
+.mode-button {
+  padding: 0.42rem 0.62rem;
+  color: var(--muted);
+  border: 0;
+  border-radius: 0.48rem;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.mode-button.active {
+  color: var(--cyan-bright);
+  background: rgba(56, 217, 197, 0.13);
+}
+
 .icon-button {
   width: 2.1rem;
   height: 2.1rem;
@@ -501,6 +637,24 @@ button:disabled {
   border: 0;
 }
 
+.idle-placeholder strong {
+  color: #d7e2ee;
+  font-size: 0.95rem;
+}
+
+.placeholder-icon {
+  width: 3rem;
+  height: 3rem;
+  display: grid;
+  place-items: center;
+  padding-left: 0.15rem;
+  color: var(--cyan);
+  border: 1px solid rgba(56, 217, 197, 0.24);
+  border-radius: 50%;
+  background: rgba(56, 217, 197, 0.07);
+  box-shadow: 0 0 28px rgba(56, 217, 197, 0.09);
+}
+
 .video-placeholder {
   z-index: 2;
   display: flex;
@@ -520,6 +674,72 @@ button:disabled {
 .small-spinner {
   width: 1.6rem;
   height: 1.6rem;
+}
+
+.analysis-panel {
+  padding: 0.9rem 1.1rem 1rem;
+  border-top: 1px solid var(--line);
+  background: rgba(3, 11, 20, 0.48);
+}
+
+.analysis-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.analysis-heading h4 {
+  margin: 0.18rem 0 0;
+  font-size: 0.9rem;
+}
+
+.analysis-availability {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.analysis-availability.online .status-dot {
+  background: var(--cyan);
+  box-shadow: 0 0 8px rgba(56, 217, 197, 0.7);
+}
+
+.analysis-availability.error .status-dot {
+  background: var(--danger);
+  box-shadow: 0 0 8px rgba(255, 107, 122, 0.72);
+}
+
+.analysis-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+}
+
+.analysis-metrics > div {
+  min-width: 0;
+  display: grid;
+  gap: 0.24rem;
+  padding: 0.62rem 0.68rem;
+  border: 1px solid rgba(151, 178, 213, 0.12);
+  border-radius: 0.62rem;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.analysis-metrics span {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.analysis-metrics strong {
+  overflow: hidden;
+  color: #dce8f5;
+  font-size: 0.74rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stream-footer {
@@ -571,8 +791,16 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
-  .stream-grid {
+  .viewer-layout {
     grid-template-columns: 1fr;
+  }
+
+  .stream-selector {
+    position: static;
+  }
+
+  .stream-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .system-state,
@@ -611,6 +839,14 @@ button:disabled {
 
   .stream-header {
     padding: 0.85rem;
+  }
+
+  .stream-list {
+    grid-template-columns: 1fr;
+  }
+
+  .analysis-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .stream-footer {

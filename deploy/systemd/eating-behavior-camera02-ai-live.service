@@ -1,0 +1,27 @@
+[Unit]
+Description=Eating Behavior camera02 annotated live stream for JoyAI
+After=network-online.target joyai-mediamtx.service joyai-mediamtx-ingress.service
+Wants=network-online.target joyai-mediamtx.service joyai-mediamtx-ingress.service
+
+[Service]
+Type=simple
+User=root
+Group=joyai-viewer
+WorkingDirectory=/root/Eating_behavior
+RuntimeDirectory=eating-behavior-camera02-ai
+RuntimeDirectoryMode=0750
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/root/Eating_behavior/src:/root/Eating_behavior
+Environment=YOLO_AUTOINSTALL=false
+Environment=WANDB_DISABLED=true
+ExecStart=/opt/eating-behavior/conda-env/bin/python /root/Eating_behavior/tools/run_live_annotated_recording.py --source rtmp://127.0.0.1:11935/live/camera02 --source-id camera02 --output-root /run/eating-behavior-camera02-ai --models-config /root/Eating_behavior/configs/models.yaml --pipeline-config /root/Eating_behavior/configs/pipeline.yaml --device 0 --detection-confidence 0.60 --inference-interval 3 --publish-url rtmp://127.0.0.1:11935/live/camera02-ai --no-recording --reconnect-delay-seconds 5 --progress-every 25
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=45
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

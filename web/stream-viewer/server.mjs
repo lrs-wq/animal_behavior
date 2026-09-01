@@ -12,6 +12,16 @@ const SESSION_TTL_SECONDS = Number.parseInt(
   process.env.JOYAI_VIEWER_SESSION_TTL_SECONDS || "43200",
   10,
 );
+const ANALYSIS_ENABLED = /^(1|true|yes|on)$/i.test(
+  process.env.JOYAI_ANALYSIS_ENABLED || "false",
+);
+const ANALYSIS_STATUS_PATH =
+  process.env.JOYAI_ANALYSIS_STATUS_PATH ||
+  "/run/eating-behavior-camera02-ai/status.json";
+const ANALYSIS_STATUS_MAX_AGE_SECONDS = Number.parseInt(
+  process.env.JOYAI_ANALYSIS_STATUS_MAX_AGE_SECONDS || "15",
+  10,
+);
 
 const COOKIE_NAME = "joyai_stream_session";
 const COOKIE_PATH = "/joyai";
@@ -19,6 +29,9 @@ const PUBLIC_DIR = fileURLToPath(new URL("./public/", import.meta.url));
 const MAX_BODY_BYTES = 8 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_FAILURES = 5;
+const SESSION_ID_BYTES = 18;
+const HLS_PATH_PATTERN = /^\/live\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})(?:\/|$)/;
+const PUBLIC_STREAM_PREFIX = "/joyai/stream";
 
 const staticFiles = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
@@ -41,6 +54,18 @@ const streams = Object.freeze([
     description: "camera02 · 实时画面",
     playbackUrl:
       "/joyai/stream/live/camera02/?autoplay=true&muted=true&controls=true&playsinline=true",
+    ...(ANALYSIS_ENABLED
+      ? {
+          analysisView: {
+            id: "analysis",
+            name: "AI 分析",
+            description: "camera02 · AI 实时分析",
+            streamPath: "live/camera02-ai",
+            playbackUrl:
+              "/joyai/stream/live/camera02-ai/?autoplay=true&muted=true&controls=true&playsinline=true",
+          },
+        }
+      : {}),
   },
   {
     id: "camera03",
@@ -58,7 +83,10 @@ const streams = Object.freeze([
   },
 ]);
 
+const streamsById = new Map(streams.map((stream) => [stream.id, stream]));
 const loginAttempts = new Map();
+const activeSessions = new Map();
+let lastSessionSweep = 0;
 
 function assertConfiguration() {
   const errors = [];
@@ -74,6 +102,16 @@ function assertConfiguration() {
   }
   if (!Number.isInteger(SESSION_TTL_SECONDS) || SESSION_TTL_SECONDS < 300) {
     errors.push("JOYAI_VIEWER_SESSION_TTL_SECONDS 至少为 300 秒");
+  }
+  if (!ANALYSIS_STATUS_PATH.startsWith("/run/")) {
+    errors.push("JOYAI_ANALYSIS_STATUS_PATH 必须位于 /run 下");
+  }
+  if (
+    !Number.isInteger(ANALYSIS_STATUS_MAX_AGE_SECONDS) ||
+    ANALYSIS_STATUS_MAX_AGE_SECONDS < 5 ||
+    ANALYSIS_STATUS_MAX_AGE_SECONDS > 300
+  ) {
+    errors.push("JOYAI_ANALYSIS_STATUS_MAX_AGE_SECONDS 必须在 5 到 300 之间");
   }
   if (errors.length) throw new Error(errors.join("；"));
 }
@@ -143,6 +181,20 @@ function signSession(payload) {
   return `${encoded}.${signature}`;
 }
 
+function removeSession(session) {
+  if (typeof session?.sid === "string") activeSessions.delete(session.sid);
+}
+
+function sweepExpiredSessions(now = Math.floor(Date.now() / 1000)) {
+  if (now - lastSessionSweep < 60) return;
+  lastSessionSweep = now;
+  for (const [sessionId, state] of activeSessions) {
+    if (!Number.isInteger(state?.expiresAt) || state.expiresAt <= now) {
+      activeSessions.delete(sessionId);
+    }
+  }
+}
+
 function verifySession(token) {
   if (typeof token !== "string" || token.length > 2048) return null;
   const parts = token.split(".");
@@ -166,6 +218,9 @@ function verifySession(token) {
     const now = Math.floor(Date.now() / 1000);
     if (
       payload?.sub !== USERNAME ||
+      typeof payload?.sid !== "string" ||
+      payload.sid.length < 16 ||
+      payload.sid.length > 128 ||
       !Number.isInteger(payload?.iat) ||
       !Number.isInteger(payload?.exp) ||
       payload.exp <= now ||
@@ -310,11 +365,20 @@ async function handleLogin(req, res) {
   loginAttempts.delete(ip);
   const issuedAt = Math.floor(now / 1000);
   const expiresAt = issuedAt + SESSION_TTL_SECONDS;
+  const sessionId = randomBytes(SESSION_ID_BYTES).toString("base64url");
   const token = signSession({
     sub: USERNAME,
     iat: issuedAt,
     exp: expiresAt,
+    sid: sessionId,
     nonce: randomBytes(12).toString("base64url"),
+  });
+  sweepExpiredSessions(issuedAt);
+  activeSessions.set(sessionId, {
+    expiresAt,
+    selectedStreamId: null,
+    selectedViewId: null,
+    selectedStreamPath: null,
   });
   const cookie = [
     `${COOKIE_NAME}=${token}`,
@@ -338,7 +402,171 @@ function requireSession(req, res) {
     sendJson(res, 401, { error: "登录已失效，请重新登录" });
     return null;
   }
+  const now = Math.floor(Date.now() / 1000);
+  sweepExpiredSessions(now);
+  let state = activeSessions.get(session.sid);
+  if (!state) {
+    sendJson(res, 401, { error: "登录会话已失效，请重新登录" });
+    return null;
+  }
+  state.expiresAt = session.exp;
+  session.state = state;
   return session;
+}
+
+function streamPathFromRequestPath(originalUri) {
+  if (typeof originalUri !== "string") return null;
+
+  let pathname;
+  try {
+    pathname = new URL(originalUri, "http://joyai.local").pathname;
+  } catch {
+    return null;
+  }
+
+  if (pathname.startsWith(`${PUBLIC_STREAM_PREFIX}/`)) {
+    pathname = pathname.slice(PUBLIC_STREAM_PREFIX.length);
+  }
+
+  const match = HLS_PATH_PATTERN.exec(pathname);
+  return match ? `live/${match[1]}` : null;
+}
+
+function selectedView(stream, requestedViewId) {
+  const viewId = requestedViewId || "raw";
+  if (viewId === "raw") {
+    return {
+      id: "raw",
+      name: "原始画面",
+      description: stream.description,
+      streamPath: `live/${stream.id}`,
+      playbackUrl: stream.playbackUrl,
+    };
+  }
+  if (viewId === "analysis" && stream.analysisView) return stream.analysisView;
+  return null;
+}
+
+async function handleStreamSelection(req, res) {
+  if (!sameOrigin(req)) {
+    sendJson(res, 403, { error: "请求来源不受信任" });
+    return;
+  }
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  let body;
+  try {
+    body = await readJson(req);
+  } catch (error) {
+    sendJson(res, error.statusCode || 400, { error: error.message });
+    return;
+  }
+
+  const stream = streamsById.get(body.streamId);
+  if (!stream) {
+    sendJson(res, 404, { error: "视频流不存在" });
+    return;
+  }
+
+  const view = selectedView(stream, body.viewId);
+  if (!view) {
+    sendJson(res, 404, { error: "视频模式不存在或尚未启用" });
+    return;
+  }
+
+  session.state.selectedStreamId = stream.id;
+  session.state.selectedViewId = view.id;
+  session.state.selectedStreamPath = view.streamPath;
+  sendJson(res, 200, {
+    selectedStreamId: stream.id,
+    selectedViewId: view.id,
+    viewName: view.name,
+    viewDescription: view.description,
+    playbackUrl: view.playbackUrl,
+  });
+}
+
+function analysisOfflineStatus() {
+  return {
+    enabled: true,
+    available: false,
+    state: "offline",
+    updatedAt: null,
+    lastFrameAt: null,
+    detectionConfidence: 0.6,
+    poseEnabled: true,
+    postureEnabled: true,
+    currentCatInstances: 0,
+    currentPoseInstances: 0,
+    currentEatingState: "",
+    currentPostures: [],
+    poseErrorCode: "",
+    reconnects: 0,
+  };
+}
+
+function finiteNumber(value, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+async function handleAnalysisStatus(req, res) {
+  if (!requireSession(req, res)) return;
+  if (!ANALYSIS_ENABLED) {
+    sendJson(res, 404, { error: "AI 分析尚未启用" });
+    return;
+  }
+
+  let status;
+  try {
+    const raw = await readFile(ANALYSIS_STATUS_PATH, "utf8");
+    if (raw.length > 64 * 1024) throw new Error("status file is too large");
+    status = JSON.parse(raw);
+  } catch {
+    sendJson(res, 200, analysisOfflineStatus());
+    return;
+  }
+
+  const lastFrameAt =
+    typeof status.last_frame_at === "string" ? status.last_frame_at : null;
+  const lastFrameMillis = lastFrameAt ? Date.parse(lastFrameAt) : Number.NaN;
+  const fresh =
+    Number.isFinite(lastFrameMillis) &&
+    Date.now() - lastFrameMillis <= ANALYSIS_STATUS_MAX_AGE_SECONDS * 1000;
+  const runningStates = new Set([
+    "streaming",
+    "recording",
+    "recording_and_streaming",
+  ]);
+  const state = typeof status.state === "string" ? status.state : "unknown";
+  const currentPostures = Array.isArray(status.current_postures)
+    ? status.current_postures
+        .filter((value) => typeof value === "string" && value.length <= 64)
+        .slice(0, 8)
+    : [];
+
+  sendJson(res, 200, {
+    enabled: true,
+    available: fresh && runningStates.has(state) && !status.last_error,
+    state: fresh ? state : "stale",
+    updatedAt: typeof status.updated_at === "string" ? status.updated_at : null,
+    lastFrameAt,
+    detectionConfidence: finiteNumber(status.detection_confidence, 0.6),
+    poseEnabled: status.pose_enabled === true,
+    postureEnabled: status.posture_enabled === true,
+    currentCatInstances: finiteNumber(status.current_cat_instances),
+    currentPoseInstances: finiteNumber(status.current_pose_instances),
+    currentEatingState:
+      typeof status.current_eating_state === "string"
+        ? status.current_eating_state.slice(0, 64)
+        : "",
+    currentPostures,
+    poseErrorCode:
+      typeof status.last_pose_error_code === "string"
+        ? status.last_pose_error_code.slice(0, 80)
+        : "",
+    reconnects: finiteNumber(status.reconnects),
+  });
 }
 
 async function serveStatic(pathname, res) {
@@ -383,11 +611,22 @@ async function handleRequest(req, res) {
   }
 
   if (pathname === "/api/auth" && req.method === "GET") {
-    if (!sessionFromRequest(req)) {
-      sendEmpty(res, 401);
+    const session = requireSession(req, res);
+    if (!session) return;
+    const originalPath = req.headers["x-original-uri"];
+    const requestedStreamPath = streamPathFromRequestPath(originalPath);
+    if (
+      !session.state.selectedStreamPath ||
+      requestedStreamPath !== session.state.selectedStreamPath
+    ) {
+      sendEmpty(res, 403);
       return;
     }
-    sendEmpty(res, 204, { "X-JoyAI-Authenticated": "1" });
+    sendEmpty(res, 204, {
+      "X-JoyAI-Authenticated": "1",
+      "X-JoyAI-Selected-Stream": session.state.selectedStreamId,
+      "X-JoyAI-Selected-View": session.state.selectedViewId,
+    });
     return;
   }
 
@@ -398,13 +637,30 @@ async function handleRequest(req, res) {
       authenticated: true,
       username: session.sub,
       expiresAt: session.exp,
+      selectedStreamId: session.state.selectedStreamId,
+      selectedViewId: session.state.selectedViewId,
     });
     return;
   }
 
   if (pathname === "/api/streams" && req.method === "GET") {
-    if (!requireSession(req, res)) return;
-    sendJson(res, 200, { streams });
+    const session = requireSession(req, res);
+    if (!session) return;
+    sendJson(res, 200, {
+      streams,
+      selectedStreamId: session.state.selectedStreamId,
+      selectedViewId: session.state.selectedViewId,
+    });
+    return;
+  }
+
+  if (pathname === "/api/select-stream" && req.method === "POST") {
+    await handleStreamSelection(req, res);
+    return;
+  }
+
+  if (pathname === "/api/analysis/status" && req.method === "GET") {
+    await handleAnalysisStatus(req, res);
     return;
   }
 
@@ -413,6 +669,7 @@ async function handleRequest(req, res) {
       sendJson(res, 403, { error: "请求来源不受信任" });
       return;
     }
+    removeSession(sessionFromRequest(req));
     const cookie = [
       `${COOKIE_NAME}=`,
       `Path=${COOKIE_PATH}`,

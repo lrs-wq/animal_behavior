@@ -1,0 +1,24 @@
+[Unit]
+Description=Eating Behavior camera02 continuous annotated recorder
+After=network-online.target joyai-mediamtx-ingress.service
+Wants=network-online.target joyai-mediamtx-ingress.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Eating_behavior
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/root/Eating_behavior/src:/root/Eating_behavior
+Environment=YOLO_AUTOINSTALL=false
+Environment=WANDB_DISABLED=true
+ExecStart=/opt/eating-behavior/conda-env/bin/python /root/Eating_behavior/tools/run_live_annotated_recording.py --source rtmp://127.0.0.1:11935/live/camera02 --source-id camera02 --output-root /data/Eating_behavior/joyai_camera02_continuous_annotated --models-config /root/Eating_behavior/configs/models.yaml --pipeline-config /root/Eating_behavior/configs/pipeline.yaml --device 0 --segment-seconds 120 --detection-confidence 0.60 --min-free-gb 20 --reconnect-delay-seconds 5 --progress-every 250
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=75
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

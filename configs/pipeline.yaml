@@ -1,6 +1,6 @@
 detection:
   # YOLO detection thresholds. cat is the full cat box, feeding_head marks eating.
-  confidence: 0.25
+  confidence: 0.60
   iou: 0.70
   # Always apply project-owned class-aware NMS. Some end-to-end checkpoints
   # bypass Ultralytics NMS, making its iou argument ineffective.
@@ -19,9 +19,10 @@ coat:
   min_margin: 0.05
 
 pose:
-  # RTMPose is optional so development machines without OpenMMLab still run.
-  # Deployment enables this only with the four pinned models.pose fields.
-  enabled: false
+  # The production registry enables RTMPose only with all four models.pose
+  # fields pinned. Development overrides may disable it on machines without
+  # the OpenMMLab runtime.
+  enabled: true
   min_cat_area: 4096
   max_instances_per_frame: 8
   keypoint_confidence: 0.30
