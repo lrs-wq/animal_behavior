@@ -16,6 +16,25 @@ outputs/
 # Local datasets may be a directory or an absolute-path symlink.
 /data
 
+# Local W&B artifact cache may live outside training/.
+/.wandb_cache/
+
+# Operator snapshots and editor backups are not source.
+*.backup-*
+*.bak
+*~
+
+# Raw video and extracted JPEG frames stay out of Git. Curated documentation
+# assets use PNG/SVG and are intentionally not covered by these rules.
+*.avi
+*.m4v
+*.mkv
+*.mov
+*.mp4
+*.webm
+*.jpg
+*.jpeg
+
 # Python package/build metadata.
 *.egg-info/
 build/
