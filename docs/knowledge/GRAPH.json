@@ -160,6 +160,14 @@
       "evidence": "training/README.md"
     },
     {
+      "id": "eating.tool.frame_preparation",
+      "type": "tool",
+      "name": "可恢复抽帧与带源映射的扁平化发布",
+      "path": "tools/extract_every_50_frames.py",
+      "tags": ["offline", "frames", "manifest", "privacy-boundary"],
+      "evidence": "tools/extract_every_50_frames.py"
+    },
+    {
       "id": "eating.decision.model_promotion",
       "type": "decision",
       "name": "训练产物必须评估、受控复制、校验 SHA-256 后显式注册",
@@ -308,6 +316,12 @@
       "relation": "produces_candidate_for",
       "to": "eating.config.models",
       "evidence": "README.md"
+    },
+    {
+      "from": "eating.training.offline",
+      "relation": "uses",
+      "to": "eating.tool.frame_preparation",
+      "evidence": "tools/flatten_extracted_frames.py"
     },
     {
       "from": "eating.config.models",

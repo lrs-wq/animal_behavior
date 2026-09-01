@@ -27,12 +27,21 @@
       "purpose": "单路直播的实时分析、标注、分段录像与 RTMP 发布入口"
     },
     {
+      "path": "tools/extract_every_50_frames.py",
+      "purpose": "可恢复、可校验的按源帧间隔视频抽帧入口"
+    },
+    {
+      "path": "tools/flatten_extracted_frames.py",
+      "purpose": "带 CSV 源映射的抽取帧扁平化发布入口"
+    },
+    {
       "path": "web/stream-viewer/server.mjs",
       "purpose": "认证实时视频查看服务"
     }
   ],
   "verification": [
     "python -m pytest -q",
+    "python -m py_compile tools/extract_every_50_frames.py tools/flatten_extracted_frames.py",
     "npm --prefix web/stream-viewer run check",
     "npm --prefix web/stream-viewer test",
     "systemd-analyze verify deploy/systemd/eating-behavior-camera02-ai-live.service deploy/systemd/eating-behavior-camera02-annotated.service web/stream-viewer/deploy/joyai-stream-viewer.service"
@@ -88,6 +97,13 @@
     {
       "paths": ["requirements/**", "requirements.txt", "pyproject.toml"],
       "knowledge": ["dependency", "verification"]
+    },
+    {
+      "paths": [
+        "tools/extract_every_50_frames.py",
+        "tools/flatten_extracted_frames.py"
+      ],
+      "knowledge": ["training", "dataset-preparation", "privacy"]
     },
     {
       "paths": ["training/**"],
