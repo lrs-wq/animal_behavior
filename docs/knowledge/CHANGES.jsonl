@@ -12,3 +12,4 @@
 {"date": "2026-09-07", "type": "fix", "summary": "将后端 userId 固定为正整数 JSON number，SQLite 升级为 v2 整数用户主键并新增独立 username；提供带一致性备份与事务回滚的显式迁移，保留游标及事件 ID，只纠正已知未交付活跃载荷。", "areas": ["user-mapping", "storage", "backend-api", "compatibility", "verification"]}
 {"date": "2026-09-30", "type": "release", "summary": "汇总服务器正式事件发送版本与本地统一可视化及采集文档；Codeup 保持默认跟踪，GitHub 使用独立 remote 发布相同源码提交，媒体仅开放逐文件演示白名单。", "areas": ["distribution", "visualization", "deployment", "privacy", "verification"]}
 {"date": "2026-09-30", "type": "operations", "summary": "本机 Git SSH 经已授权阿里云服务器转发，使用服务器现有 Git 认证；原 origin URL 与默认推送保持 Codeup，本机研发分支和同步分支建立 Codeup upstream，私钥不复制到本机或源码。", "areas": ["distribution", "verification", "operational-constraint"]}
+{"date": "2026-09-30", "type": "model-distribution", "summary": "按用户授权发布四个精选模型副本：现行检测、v9 验证最优检测候选、毛色分类和真实机位 RTMPose；逐文件白名单、完整哈希与选型依据，以及保持允许目录和双哈希的仓库本地配置；生产注册表与模型内容不自动改变。", "areas": ["model-governance", "distribution", "config", "verification"]}

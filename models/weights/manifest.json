@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "published_date": "2026-09-30",
+  "files": [
+    {
+      "file": "detection_best.pt",
+      "bytes": 5377605,
+      "sha256": "7c1219e2ff84ab24df8e242b6a3c4ea7690cae75cd5afd1c456aaecb41b6d144",
+      "role": "detection",
+      "selection": "current_production",
+      "training_run": "v9_yolo26n_640_b16_e200_adamw_20260820",
+      "best_epoch": 122,
+      "metrics": {
+        "precision": 0.88578,
+        "recall": 0.85806,
+        "mAP50": 0.90633,
+        "mAP50_95": 0.7998
+      },
+      "evaluation_scope": "v9 validation split; same data, image size, batch and seed as the two other v9 runs"
+    },
+    {
+      "file": "detection_v9_map5095_best.pt",
+      "bytes": 5364805,
+      "sha256": "dbb8148f1d237d06122a0988cb906b7e81270f8916e0f7f6347d2f6cccf0ef48",
+      "role": "detection",
+      "selection": "best_v9_validation_mAP50_95",
+      "training_run": "v9_yolo26n_640_b16_e100_20260820",
+      "best_epoch": 93,
+      "metrics": {
+        "precision": 0.89436,
+        "recall": 0.85122,
+        "mAP50": 0.90363,
+        "mAP50_95": 0.80395
+      },
+      "evaluation_scope": "Highest validation mAP50-95 among the three compared v9 YOLO26n runs; not a cross-dataset ranking"
+    },
+    {
+      "file": "coat_classifier_best.pt",
+      "bytes": 3223042,
+      "sha256": "a1b832acf1155c5671d4cac8848d15427daf854e1bb68042231ddaa32a89d322",
+      "role": "coat_classification",
+      "selection": "current_production_framework_best",
+      "training_run": "cls_v2_yolo26n_200e_128_auto_batch",
+      "metrics": {
+        "accuracy_top1": 0.73316,
+        "accuracy_top5": 0.97872,
+        "fitness": 0.85594
+      },
+      "evaluation_scope": "Metrics stored in the selected best checkpoint; framework fitness combines top1 and top5"
+    },
+    {
+      "file": "rtmpose_m_camera05_realbbox_stage2_epoch140-56b9fb51_20260715.pth",
+      "bytes": 54687199,
+      "sha256": "56b9fb5165a3a2cc298fd135bba964f45cffebe6e14a6abe416dd51f0705d3ec",
+      "role": "pose",
+      "selection": "current_production_best_retained_post_switch",
+      "training_run": "cat_pose_local_camera_proposals_rtmpose_m_ap10k_v1",
+      "epoch": 140,
+      "metrics": {
+        "camera_internal_AP": 0.7396039603960396,
+        "camera_internal_AR": 0.79
+      },
+      "evaluation_scope": "Highest AP among retained post-switch epochs 140/145/150; only 10 annotations, used for engineering selection, not an untouched final blind test; old clean516 reference had label contamination"
+    }
+  ],
+  "pose_config": {
+    "file": "models/rtmpose/cat_pose_v2_clean516_ap10k.py",
+    "sha256": "ca887cff59457f72ab6f639d417f8638f65c9626ea7dd1df9e3b7a5624296bc7"
+  },
+  "selection_date": "2026-09-30",
+  "production_models_config": "configs/models.yaml"
+}

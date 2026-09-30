@@ -71,7 +71,7 @@ Python 环境 /opt/eating-behavior/conda-env、系统 Node 与 /etc 下的服务
 - 正式 `src/eating_behavior/` 运行时不训练模型。
 - `training/`、姿态数据工具和 W&B 属于离线研发。
 - 训练产物不能自动进入生产；必须评估、复制到受控目录、计算 SHA-256，并显式更新 `configs/models.yaml`。
-- 当前生产注册表校验检测模型，并以配置与 checkpoint 双 SHA-256 固定 RTMPose；模型权重仍通过受控目录带外提供，不进入 Git。
+- 当前生产注册表校验检测模型，并以配置与 checkpoint 双 SHA-256 固定 RTMPose；生产权重保留受控目录；经用户授权的四个精选副本在发布分支 models/weights 中分发，其他权重不进入 Git。
 
 ## 离线帧准备
 
@@ -109,6 +109,13 @@ Python 环境 /opt/eating-behavior/conda-env、系统 Node 与 /etc 下的服务
 
 - 阿里云 Codeup 保持默认 `origin` 与既有分支 upstream；GitHub 使用独立 `github` remote。
 - 2026-09-30 同步分支汇总服务器正式版本与本地统一可视化及采集文档，向 Codeup 同名分支与 GitHub `main` 发布同一提交；运行服务的源码目录保持 `/root/Eating_behavior`。
-- 仓库媒体采用逐文件白名单，仅分发 `docs/demo/` 的少量标注演示结果；原始媒体、训练数据、模型权重、运行事件、用户映射及凭据保留在仓库外。操作依据见 `docs/source_sync.md` 与 ADR 0006。
+- 仓库媒体采用逐文件白名单，仅分发 `docs/demo/` 的少量标注演示结果；原始媒体、训练数据、清单外权重、运行事件、用户映射及凭据保留在仓库外。操作依据见 `docs/source_sync.md` 与 ADR 0006。
 - `src/eating_behavior/visualization.py` 统一实时 `--show` 与批量视频的检测框、毛色/姿态标签、骨架及进食头关联线。标签优先使用确认姿态，其次使用当前观察；无法判断时显示 unknown。渲染不推进事件状态机。
 - 当前本机 Git SSH 通过已授权的阿里云服务器转发，使用服务器既有 Git 认证；默认推送仍为 origin，本机研发分支与同步分支均跟踪 Codeup。转发配置保存在本机 .git，不随源码分发；运行时推理没有新增依赖。
+
+## 精选模型分发
+
+- 按用户于 2026-09-30 上传精选训练权重的要求，四个副本进入发布仓库；models/weights/manifest.json 与 SHA256SUMS 固定身份、大小和哈希。二进制不进入知识文件。
+- 分发当前生产检测、v9 验证 mAP50-95 最优检测候选、现行框架 best 毛色分类器，以及真实机位适配 RTMPose 第二阶段 epoch 140；指标和评测局限见 docs/model_weights.md。不能跨数据集凭单个数值宣称全局最优。
+- configs/models.github.yaml 在仓库根目录加载现行组合；configs/models.github.best-map5095.yaml 只替换检测候选。两者保持显式允许目录、配置与 checkpoint SHA-256。
+- 生产 models.yaml 与 /data 中实际资产不自动改变；训练推广仍遵循评估、受控复制和显式注册。Codeup 跟踪与同提交 GitHub 同步规则保持。

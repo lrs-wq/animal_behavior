@@ -54,7 +54,8 @@
     "python -m py_compile tools/extract_every_50_frames.py tools/flatten_extracted_frames.py",
     "npm --prefix web/stream-viewer run check",
     "npm --prefix web/stream-viewer test",
-    "systemd-analyze verify deploy/systemd/eating-behavior-camera02-ai-live.service deploy/systemd/eating-behavior-camera02-annotated.service web/stream-viewer/deploy/joyai-stream-viewer.service deploy/systemd/eating-behavior-events.service"
+    "systemd-analyze verify deploy/systemd/eating-behavior-camera02-ai-live.service deploy/systemd/eating-behavior-camera02-annotated.service web/stream-viewer/deploy/joyai-stream-viewer.service deploy/systemd/eating-behavior-events.service",
+    "cd models/weights && sha256sum -c SHA256SUMS"
   ],
   "source_docs": [
     "README.md",
@@ -69,7 +70,9 @@
     "docs/knowledge/DECISIONS/0004-sqlite-backend-events.md",
     "docs/knowledge/DECISIONS/0005-numeric-user-identity.md",
     "docs/source_sync.md",
-    "docs/knowledge/DECISIONS/0006-github-codeup-sync.md"
+    "docs/knowledge/DECISIONS/0006-github-codeup-sync.md",
+    "docs/model_weights.md",
+    "docs/knowledge/DECISIONS/0007-selected-model-distribution.md"
   ],
   "watch_rules": [
     {
@@ -219,6 +222,16 @@
         "distribution",
         "privacy",
         "deployment"
+      ]
+    },
+    {
+      "paths": [
+        "docs/model_weights.md"
+      ],
+      "knowledge": [
+        "model-governance",
+        "distribution",
+        "verification"
       ]
     }
   ],

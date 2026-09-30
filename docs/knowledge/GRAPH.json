@@ -405,6 +405,44 @@
         "git-ssh-transport"
       ],
       "evidence": "docs/source_sync.md"
+    },
+    {
+      "id": "eating.rule.selected_model_distribution",
+      "type": "business_rule",
+      "name": "用户授权精选模型副本与哈希清单分发",
+      "path": "docs/model_weights.md",
+      "tags": [
+        "model-governance",
+        "distribution",
+        "sha256"
+      ],
+      "evidence": "docs/model_weights.md"
+    },
+    {
+      "id": "eating.config.models.github",
+      "type": "config",
+      "name": "仓库权重的可移植模型配置与检测候选",
+      "path": "configs/models.github.yaml",
+      "tags": [
+        "model",
+        "sha256",
+        "allowed-roots",
+        "distribution"
+      ],
+      "evidence": "configs/models.github.yaml"
+    },
+    {
+      "id": "eating.config.models.github.best_map5095",
+      "type": "config",
+      "name": "v9 验证 mAP50-95 最优检测候选配置",
+      "path": "configs/models.github.best-map5095.yaml",
+      "tags": [
+        "model",
+        "model-candidate",
+        "sha256",
+        "distribution"
+      ],
+      "evidence": "configs/models.github.best-map5095.yaml"
     }
   ],
   "edges": [
@@ -665,6 +703,36 @@
       "relation": "governed_by",
       "to": "eating.rule.source_distribution",
       "evidence": "docs/source_sync.md"
+    },
+    {
+      "from": "eating.project",
+      "relation": "contains",
+      "to": "eating.config.models.github",
+      "evidence": "configs/models.github.yaml"
+    },
+    {
+      "from": "eating.config.models.github",
+      "relation": "governed_by",
+      "to": "eating.rule.selected_model_distribution",
+      "evidence": "docs/model_weights.md"
+    },
+    {
+      "from": "eating.rule.selected_model_distribution",
+      "relation": "preserves",
+      "to": "eating.decision.model_promotion",
+      "evidence": "docs/knowledge/DECISIONS/0007-selected-model-distribution.md"
+    },
+    {
+      "from": "eating.project",
+      "relation": "contains",
+      "to": "eating.config.models.github.best_map5095",
+      "evidence": "configs/models.github.best-map5095.yaml"
+    },
+    {
+      "from": "eating.config.models.github.best_map5095",
+      "relation": "governed_by",
+      "to": "eating.rule.selected_model_distribution",
+      "evidence": "docs/model_weights.md"
     }
   ]
 }

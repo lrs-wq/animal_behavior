@@ -1,0 +1,21 @@
+# Run from the repository root. Production configs/models.yaml remains separate.
+# Selected artifacts are pinned by SHA-256; do not disable verification.
+# Alternate v9 detector: highest validation mAP50-95 among compared runs.
+detection_model: models/weights/detection_v9_map5095_best.pt
+detection_model_sha256: dbb8148f1d237d06122a0988cb906b7e81270f8916e0f7f6347d2f6cccf0ef48
+coat_classifier_model: models/weights/coat_classifier_best.pt
+coat_classifier_model_sha256: a1b832acf1155c5671d4cac8848d15427daf854e1bb68042231ddaa32a89d322
+pose:
+  config: models/rtmpose/cat_pose_v2_clean516_ap10k.py
+  config_sha256: ca887cff59457f72ab6f639d417f8638f65c9626ea7dd1df9e3b7a5624296bc7
+  checkpoint: models/weights/rtmpose_m_camera05_realbbox_stage2_epoch140-56b9fb51_20260715.pth
+  checkpoint_sha256: 56b9fb5165a3a2cc298fd135bba964f45cffebe6e14a6abe416dd51f0705d3ec
+security:
+  allow_pickle_weights: true
+  require_sha256: true
+  allowed_roots:
+  - models/weights
+  - models/rtmpose
+identity_gallery: null
+feature_backend: null
+feature_model: null

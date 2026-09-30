@@ -11,7 +11,7 @@
 ## 演示素材与代码同步
 
 [演示说明](docs/demo/README.md) 提供一个可直接播放的标注视频和两张输出截图。
-模型权重通过受控目录另行提供；其余图片、视频、数据集和运行文件不上传。
+经授权的精选模型权重已收入 [models/weights](models/weights/README.md)，可随仓库克隆；其余图片、视频、数据集和运行文件不上传。
 
 ![猫咪行为标注示例](docs/demo/cat-standing.jpg)
 
@@ -23,6 +23,14 @@
 仓库中的 `training/` 和姿态数据工具用于离线研发、回归实验和模型候选产出，与正式推理运行时隔离。训练结果不会自动进入生产配置；候选模型必须经过评估、复制到受控模型目录、计算 SHA-256，并显式更新 `configs/models.yaml` 后才能被推理端加载。
 
 当前已实现的正式链路包括：视频文件/目录/摄像头/RTSP/HTTP 输入、猫和进食头检测、毛色分类、按家庭隔离的身份路由、进食状态机、猫在场提醒、可选 RTMPose 姿态推理、姿态时序过滤、实时叠加画面、批量标注视频以及 JSONL/CSV 事件输出。图库 embedding Re-ID、余粮模型和自动评估报告仍属于后续工作，配置中的相关字段只是预留接口。
+
+## 已发布模型
+
+本次模型包含现行检测、毛色分类、RTMPose，以及 v9 验证 mAP50-95 最优检测候选。
+[模型选型与使用说明](docs/model_weights.md) 列出实测指标、选型范围和 SHA-256。
+从仓库根目录运行时，使用 `configs/models.github.yaml` 读取本仓库权重；
+需要对比检测候选时改用 `configs/models.github.best-map5095.yaml`。
+服务器生产注册表仍为 `configs/models.yaml`。
 
 ## 后端报警与用户视频源映射
 
@@ -58,10 +66,10 @@ Python 环境 /opt/eating-behavior/conda-env、系统 Node 与 /etc 下的服务
 ### 运行要求
 
 - Python `>=3.10`；基础依赖见 `pyproject.toml` 和 `requirements.txt`。
-- 检测模型与毛色分类模型放在仓库外部，并在 `configs/models.yaml` 中登记绝对路径、SHA-256 和允许的模型根目录。
+- 服务器生产检测与毛色分类模型放在仓库外部，并在 `configs/models.yaml` 中登记绝对路径、SHA-256 和允许的模型根目录；仓库演示可用 `configs/models.github.yaml`。
 - 启用 RTMPose 时，建议使用独立的 Python 3.10 + CUDA 12.1 环境，并按 `requirements/rtmpose-cu121.txt` 安装固定版本依赖。
 - 批量输出带标注 MP4 时需要 `ffmpeg`。
-- 模型权重、数据集、运行输出和凭据不随源码压缩包分发。
+- 当前发布包含四个精选模型权重及校验清单；数据集、运行输出和凭据不随源码分发。
 
 安装基础环境：
 
@@ -425,7 +433,7 @@ coat_class -> candidate cats
 
 - `src/eating_behavior/` 不导入 `training/` 或训练专用依赖。
 - 生产 worker 镜像可以不包含 `training/`、训练数据和实验日志。
-- 训练权重、W&B 运行目录、生成的数据 YAML 和数据集链接不提交到 Git。
+- 未列入 `models/weights/manifest.json` 的训练权重、W&B 目录、生成的数据 YAML 和数据集链接不提交到 Git。
 - 只有经过独立评估并登记哈希的模型文件才能进入正式推理配置。
 
 ### 2.3 本仓库不负责
@@ -885,7 +893,7 @@ names:
 
 数据盘维护约定：
 
-- 大型数据集、权重和推理产物只放在 `/data/Eating_behavior`，不要提交到 `/root/Eating_behavior` 的 Git 工作区。
+- 生产使用的数据集、权重和推理产物放在 `/data/Eating_behavior`；只有经授权、逐文件列入清单的精选权重副本可在同步分支的 `models/weights/` 分发。
 - 图片与标签必须按同一 stem 成对存放；空场景硬负样本也必须保留同名的 0 字节 `.txt` 标签。
 - 差量同步必须携带 SHA256 清单，并在临时目录校验通过、确认目标无同名冲突后再落盘。
 - 新增难例的审计图放在 `audits/`，增补清单放在数据集根目录；当前对应 `rtsp211_20260727*_manifest.json` 和 `rtsp211_20260728_round3_augmentation_manifest.json`。
@@ -1252,9 +1260,9 @@ outputs/
 - `.git/`、`.codex_tmp/` 和编辑器/代理临时文件。
 - `__pycache__/`、`.pytest_cache/`、`.mypy_cache/`、`.ruff_cache/`、`node_modules/`。
 - `outputs/`、训练日志、预测结果和其他可再生成产物。
-- 模型权重、数据集、embedding、真实流地址、账号密码、Cookie 密钥和其他凭据。
+- 清单外的模型权重、数据集、embedding、真实流地址、账号密码、Cookie 密钥和其他凭据。
 
-解压后需要单独准备模型制品与 worker 配置，安装依赖并运行测试；源码包本身不是包含模型和数据的一键离线镜像。
+解压或克隆后可使用 `models/weights/` 中的精选权重和 `configs/models.github.yaml`。仍需安装依赖、准备自己的输入与 worker 配置，并保持校验。详见 [模型选型与使用说明](docs/model_weights.md)。
 
 ## 15. 最终定位
 

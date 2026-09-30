@@ -51,7 +51,8 @@ outputs/
 build/
 dist/
 
-# Model weights live under /data out of band and are pinned by SHA-256.
+# Production weights live under /data and remain SHA-256 pinned.
+# Only the explicitly authorized publication copies below enter Git.
 *.pt
 *.pth
 *.onnx
@@ -89,3 +90,9 @@ node_modules/
 /runtime/
 /cache/
 /ops_backups/
+
+# Selected model publication allowlist (2026-09-30); all other weights stay ignored.
+!/models/weights/detection_best.pt
+!/models/weights/detection_v9_map5095_best.pt
+!/models/weights/coat_classifier_best.pt
+!/models/weights/rtmpose_m_camera05_realbbox_stage2_epoch140-56b9fb51_20260715.pth

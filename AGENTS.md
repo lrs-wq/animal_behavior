@@ -50,3 +50,9 @@
 - Run `npm --prefix web/stream-viewer run check` and `npm --prefix web/stream-viewer test` for viewer changes.
 - Runtime inference must not silently promote training output; follow the controlled model path and checksum process.
 - Never add stream credentials, customer mappings, raw frames/videos, model weights, W&B data, or production events to knowledge files.
+
+## Authorized model publication exception
+
+- The user explicitly authorized selected trained weights on GitHub on 2026-09-30. Only the four files in models/weights/manifest.json may be tracked as distribution copies; all other model artifacts remain ignored.
+- Preserve SHA-256, exact artifact bytes, inference config compatibility and selection evidence in docs/model_weights.md. Keep binary weights out of knowledge files; record identity, role and evidence only.
+- Production model content and registry continue to use /data/Eating_behavior/models. Publication and repository-local example configs do not authorize switching running production models.
