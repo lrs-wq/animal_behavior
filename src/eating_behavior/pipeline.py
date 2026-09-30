@@ -43,7 +43,6 @@ from .pose import (
     PoseInferenceError,
     PosePrediction,
     RTMPoseEstimator,
-    draw_pose_predictions,
 )
 from .pose_filter import PoseFilterConfig, PoseFilterResult, TrackPoseFilter
 from .posture import (
@@ -59,6 +58,7 @@ from .presence_state import (
     CatPresenceStateMachine,
 )
 from .tracking import CatTracker, TrackedDetection, TrackingConfig
+from .visualization import cat_posture_label, render_classification_pose_frame
 
 
 LOGGER = logging.getLogger(__name__)
@@ -1087,10 +1087,26 @@ class RealtimePipeline:
                             packet.frame,
                         )
                         if self.show:
-                            display_frame = draw_pose_predictions(
+                            display_frame = render_classification_pose_frame(
                                 packet.frame,
+                                analysis.detections,
+                                analysis.cat_decisions,
                                 analysis.poses,
-                                keypoint_threshold=self.config.pose_keypoint_confidence,
+                                cat_classes=self.config.cat_classes,
+                                feeding_classes=self.config.feeding_classes,
+                                association_max_distance_ratio=(
+                                    self.config.feeding_association_max_distance_ratio
+                                ),
+                                association_ambiguity_margin=(
+                                    self.config.feeding_association_ambiguity_margin
+                                ),
+                                pose_keypoint_confidence=(
+                                    self.config.pose_keypoint_confidence
+                                ),
+                                cat_pose_labels={
+                                    cat.detection: cat_posture_label(cat)
+                                    for cat in analysis.cats
+                                },
                             )
                             cv2.imshow("eating_behavior", display_frame)
                             key = cv2.waitKey(1) & 0xFF

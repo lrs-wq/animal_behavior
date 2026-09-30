@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-import tools.run_batch_test as batch_module
+import eating_behavior.visualization as visualization_module
 from eating_behavior.identity import IdentityDecision
 from eating_behavior.models import CoatPrediction, Detection
 from eating_behavior.pose import PoseKeypoint, PosePrediction
@@ -201,7 +201,7 @@ def test_render_frame_only_labels_classification_and_posture(
     )
     rendered_text: list[str] = []
     monkeypatch.setattr(
-        batch_module,
+        visualization_module,
         "draw_text",
         lambda _frame, text, _origin, _color: rendered_text.append(text),
     )

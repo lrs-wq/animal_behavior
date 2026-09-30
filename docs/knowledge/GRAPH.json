@@ -379,6 +379,31 @@
         "integer-json"
       ],
       "evidence": "docs/knowledge/DECISIONS/0005-numeric-user-identity.md"
+    },
+    {
+      "id": "eating.module.visualization",
+      "type": "module",
+      "name": "实时与批量统一画面叠加",
+      "path": "src/eating_behavior/visualization.py",
+      "tags": [
+        "visualization",
+        "batch",
+        "live"
+      ],
+      "evidence": "src/eating_behavior/visualization.py"
+    },
+    {
+      "id": "eating.rule.source_distribution",
+      "type": "business_rule",
+      "name": "Codeup 主跟踪与 GitHub 演示源码分发",
+      "path": "docs/source_sync.md",
+      "tags": [
+        "source",
+        "distribution",
+        "codeup",
+        "github"
+      ],
+      "evidence": "docs/source_sync.md"
     }
   ],
   "edges": [
@@ -621,6 +646,24 @@
       "relation": "governed_by",
       "to": "eating.decision.numeric_user",
       "evidence": "docs/knowledge/DECISIONS/0005-numeric-user-identity.md"
+    },
+    {
+      "from": "eating.project",
+      "relation": "contains",
+      "to": "eating.module.visualization",
+      "evidence": "src/eating_behavior/visualization.py"
+    },
+    {
+      "from": "eating.pipeline.realtime",
+      "relation": "uses",
+      "to": "eating.module.visualization",
+      "evidence": "src/eating_behavior/pipeline.py"
+    },
+    {
+      "from": "eating.project",
+      "relation": "governed_by",
+      "to": "eating.rule.source_distribution",
+      "evidence": "docs/source_sync.md"
     }
   ]
 }

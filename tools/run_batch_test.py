@@ -22,13 +22,16 @@ import cv2
 import numpy as np
 import yaml
 
-from eating_behavior.association import associate_feeding_to_cat
 from eating_behavior.config import load_yaml
 from eating_behavior.identity import IdentityDecision
 from eating_behavior.media import SourceSpec, iter_frames
 from eating_behavior.models import CoatPrediction, Detection
-from eating_behavior.pipeline import RealtimePipeline, is_named_class
-from eating_behavior.pose import PosePrediction, draw_pose_predictions
+from eating_behavior.pipeline import RealtimePipeline
+from eating_behavior.pose import PosePrediction
+from eating_behavior.visualization import (
+    cat_posture_label,
+    render_classification_pose_frame,
+)
 
 
 @dataclass(frozen=True)
@@ -387,38 +390,10 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def draw_text(
-    frame: np.ndarray, text: str, origin: tuple[int, int], color: tuple[int, int, int]
-) -> None:
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.55
-    thickness = 1
-    (width, height), baseline = cv2.getTextSize(text, font, scale, thickness)
-    x, y = origin
-    cv2.rectangle(
-        frame, (x, y - height - baseline - 6), (x + width + 8, y + 3), color, -1
-    )
-    cv2.putText(
-        frame,
-        text,
-        (x + 4, y - 3),
-        font,
-        scale,
-        (255, 255, 255),
-        thickness,
-        cv2.LINE_AA,
-    )
-
-
 def cat_pose_label(cat: Any, visibility_threshold: float) -> str:
     """Build the user-facing posture label without operational diagnostics."""
     del visibility_threshold
-    posture = (
-        getattr(cat, "posture", "")
-        or getattr(cat, "observed_posture", "")
-        or "unknown"
-    )
-    return f"posture={posture}"
+    return cat_posture_label(cat)
 
 
 def accumulate_pose_frame(
@@ -536,50 +511,19 @@ def render_frame(
     pose_keypoint_confidence: float,
     cat_pose_labels: dict[Detection, str] | None = None,
 ) -> np.ndarray:
-    rendered = draw_pose_predictions(
+    del source_id, frame_index, timestamp_seconds, eating_state
+    return render_classification_pose_frame(
         frame,
+        detections,
+        cat_decisions,
         poses,
-        keypoint_threshold=pose_keypoint_confidence,
+        cat_classes=cat_classes,
+        feeding_classes=feeding_classes,
+        association_max_distance_ratio=association_max_distance_ratio,
+        association_ambiguity_margin=association_ambiguity_margin,
+        pose_keypoint_confidence=pose_keypoint_confidence,
+        cat_pose_labels=cat_pose_labels,
     )
-    cat_by_detection = {decision[0]: decision for decision in cat_decisions}
-    for detection in detections:
-        if is_named_class(detection, cat_classes):
-            color = (40, 190, 40)
-            _, coat, _ = cat_by_detection[detection]
-            posture_label = (
-                cat_pose_labels.get(detection, "posture=unknown")
-                if cat_pose_labels is not None
-                else "posture=unknown"
-            )
-            label = f"coat={coat.class_name} {posture_label}"
-        elif is_named_class(detection, feeding_classes):
-            color = (20, 90, 230)
-            association = associate_feeding_to_cat(
-                detection,
-                list(cat_decisions),
-                max_distance_ratio=association_max_distance_ratio,
-                ambiguity_margin=association_ambiguity_margin,
-            )
-            if association is not None:
-                fx1, fy1, fx2, fy2 = detection.xyxy
-                cx1, cy1, cx2, cy2 = association.cat_detection.xyxy
-                cv2.line(
-                    rendered,
-                    ((fx1 + fx2) // 2, (fy1 + fy2) // 2),
-                    ((cx1 + cx2) // 2, (cy1 + cy2) // 2),
-                    color,
-                    2,
-                    cv2.LINE_AA,
-                )
-            label = detection.class_name
-        else:
-            color = (220, 160, 30)
-            label = detection.class_name
-        x1, y1, x2, y2 = detection.xyxy
-        cv2.rectangle(rendered, (x1, y1), (x2, y2), color, 3)
-        label_y = max(24, y1)
-        draw_text(rendered, label, (x1, label_y), color)
-    return rendered
 
 
 def safe_output_path(input_root: Path, output_root: Path, source_video: Path) -> Path:

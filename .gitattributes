@@ -13,3 +13,8 @@
 *.wandb binary
 *.webp binary
 *.zip binary
+*.mp4 binary
+*.mov binary
+*.mkv binary
+*.avi binary
+*.webm binary

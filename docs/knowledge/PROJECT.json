@@ -67,7 +67,9 @@
     "training/README.md",
     "docs/backend_event_delivery.md",
     "docs/knowledge/DECISIONS/0004-sqlite-backend-events.md",
-    "docs/knowledge/DECISIONS/0005-numeric-user-identity.md"
+    "docs/knowledge/DECISIONS/0005-numeric-user-identity.md",
+    "docs/source_sync.md",
+    "docs/knowledge/DECISIONS/0006-github-codeup-sync.md"
   ],
   "watch_rules": [
     {
@@ -192,6 +194,30 @@
         "user-mapping",
         "storage",
         "backend-api",
+        "deployment"
+      ]
+    },
+    {
+      "paths": [
+        "src/eating_behavior/visualization.py",
+        "tools/run_batch_test.py",
+        "tests/test_live_visualization.py"
+      ],
+      "knowledge": [
+        "visualization",
+        "pipeline",
+        "verification"
+      ]
+    },
+    {
+      "paths": [
+        ".gitignore",
+        ".gitattributes",
+        "docs/source_sync.md"
+      ],
+      "knowledge": [
+        "distribution",
+        "privacy",
         "deployment"
       ]
     }

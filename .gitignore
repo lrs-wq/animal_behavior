@@ -24,16 +24,27 @@ outputs/
 *.bak
 *~
 
-# Raw video and extracted JPEG frames stay out of Git. Curated documentation
-# assets use PNG/SVG and are intentionally not covered by these rules.
-*.avi
-*.m4v
-*.mkv
-*.mov
-*.mp4
-*.webm
-*.jpg
-*.jpeg
+# Media are excluded by default. Only the three reviewed demo files below
+# are distributed with source; new media require an explicit allowlist entry.
+*.[aA][vV][iI]
+*.[mM]4[vV]
+*.[mM][kK][vV]
+*.[mM][oO][vV]
+*.[mM][pP]4
+*.[wW][eE][bB][mM]
+*.[jJ][pP][gG]
+*.[jJ][pP][eE][gG]
+*.[pP][nN][gG]
+*.[gG][iI][fF]
+*.[wW][eE][bB][pP]
+*.[bB][mM][pP]
+*.[tT][iI][fF]
+*.[tT][iI][fF][fF]
+*.[hH][eE][iI][cC]
+*.[aA][vV][iI][fF]
+!/docs/demo/cat-behavior-demo.mp4
+!/docs/demo/cat-standing.jpg
+!/docs/demo/cat-crouching.jpg
 
 # Python package/build metadata.
 *.egg-info/
@@ -58,3 +69,23 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# Machine-local dependencies, credentials, customer state and scratch work.
+node_modules/
+.codex_tmp/
+.worktrees/
+.env
+.env.*
+*.env
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.db-wal
+*.db-shm
+/runtime/
+/cache/
+/ops_backups/

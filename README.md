@@ -2,9 +2,27 @@
 
 本项目是猫咪进食行为识别的正式推理工程，负责接入外部训练好的模型，完成视频推理、进食事件分析、猫咪身份识别、结果评估和错误诊断。
 
+> 当前版本：`0.1.0`
+>
+> 说明更新时间：`2026-09-30`
+>
+> 本次源码验证：`427` 项 Python 测试、`3` 项 Viewer 测试通过。
+
+## 演示素材与代码同步
+
+[演示说明](docs/demo/README.md) 提供一个可直接播放的标注视频和两张输出截图。
+模型权重通过受控目录另行提供；其余图片、视频、数据集和运行文件不上传。
+
+![猫咪行为标注示例](docs/demo/cat-standing.jpg)
+
+阿里云 Codeup 继续作为默认 `origin`，GitHub 通过独立 remote 接收相同源码提交。
+具体分支、上传范围及后续操作见 [源码同步约定](docs/source_sync.md)。
+
 正式推理运行时**不执行模型训练**。`src/eating_behavior/` 只加载经过校验的外部模型产物并执行推理；生产 worker 不依赖训练数据、W&B 或训练框架入口。
 
 仓库中的 `training/` 和姿态数据工具用于离线研发、回归实验和模型候选产出，与正式推理运行时隔离。训练结果不会自动进入生产配置；候选模型必须经过评估、复制到受控模型目录、计算 SHA-256，并显式更新 `configs/models.yaml` 后才能被推理端加载。
+
+当前已实现的正式链路包括：视频文件/目录/摄像头/RTSP/HTTP 输入、猫和进食头检测、毛色分类、按家庭隔离的身份路由、进食状态机、猫在场提醒、可选 RTMPose 姿态推理、姿态时序过滤、实时叠加画面、批量标注视频以及 JSONL/CSV 事件输出。图库 embedding Re-ID、余粮模型和自动评估报告仍属于后续工作，配置中的相关字段只是预留接口。
 
 ## 后端报警与用户视频源映射
 
@@ -34,9 +52,79 @@ Python 环境 /opt/eating-behavior/conda-env、系统 Node 与 /etc 下的服务
 相对 outputs 默认值。路径迁移不得改变模型内容或取消校验。
 
 
+
+## 快速开始
+
+### 运行要求
+
+- Python `>=3.10`；基础依赖见 `pyproject.toml` 和 `requirements.txt`。
+- 检测模型与毛色分类模型放在仓库外部，并在 `configs/models.yaml` 中登记绝对路径、SHA-256 和允许的模型根目录。
+- 启用 RTMPose 时，建议使用独立的 Python 3.10 + CUDA 12.1 环境，并按 `requirements/rtmpose-cu121.txt` 安装固定版本依赖。
+- 批量输出带标注 MP4 时需要 `ffmpeg`。
+- 模型权重、数据集、运行输出和凭据不随源码压缩包分发。
+
+安装基础环境：
+
+```powershell
+cd D:\gogelila\Eating_behavior\Eating_behavior_formal_project
+python -m pip install -e .
+```
+
+运行测试：
+
+```powershell
+python -m pip install pytest
+$env:PYTHONDONTWRITEBYTECODE="1"
+python -B -m pytest -p no:cacheprovider -q
+```
+
+首次运行前至少检查：
+
+1. `configs/models.yaml` 中两个模型路径、SHA-256 和 `security.allowed_roots`。
+2. `configs/pipeline.yaml` 中 `sources`、`worker.source_ids` 和 `identity.households`。
+3. 若启用姿态，将 `pose.enabled` 设为 `true`，并填写 RTMPose 配置与 checkpoint 的路径和 SHA-256。
+
+调试本地视频并显示实时叠加画面：
+
+```powershell
+python -m eating_behavior.main `
+  --source D:\path\to\video.mp4 `
+  --source-id cam_debug_01 `
+  --models-config configs/models.yaml `
+  --pipeline-config configs/pipeline.yaml `
+  --output-dir outputs/realtime_debug `
+  --show
+```
+
+按 `q` 停止实时窗口。RTSP/HTTP 网络流必须显式传入稳定的 `--source-id`，程序不会把含凭据的流地址当作业务主键或写入事件。
+
+生产 worker 根据配置快照运行：
+
+```powershell
+python -m eating_behavior.main `
+  --models-config configs/models.yaml `
+  --pipeline-config configs/worker_01.pipeline.yaml `
+  --output-dir outputs/worker_01 `
+  --device 0
+```
+
+批量处理 MP4 并生成标注视频与诊断汇总：
+
+```powershell
+python tools/run_batch_test.py `
+  --input-root D:\path\to\videos `
+  --output-root outputs\batch_20260819 `
+  --models-config configs/models.yaml `
+  --pipeline-config configs/pipeline.yaml `
+  --limit 20 `
+  --device 0
+```
+
+`--output-root` 必须是尚不存在的目录，防止旧结果与新结果混合。完整参数可通过 `python -m eating_behavior.main --help` 和 `python tools/run_batch_test.py --help` 查看。
+
 ## 0. 当前主业务链路
 
-当前正式项目优先面向用户视频流实时推理，主入口必须同时兼容视频文件、视频文件夹、摄像头编号和 RTSP / HTTP 视频流。
+当前正式项目优先面向用户视频流实时推理，主入口已经兼容视频文件、视频文件夹、摄像头编号和 RTSP / HTTP 视频流。
 
 第一版主链路为：
 
@@ -45,7 +133,7 @@ Python 环境 /opt/eating-behavior/conda-env、系统 Node 与 /etc 下的服务
   -> 猫检测
   -> 毛色/外观类别确认
   -> 如果该毛色在用户家庭中只有一只猫，直接确认身份并结束身份分支
-  -> 如果该毛色存在多只猫，进入身份确认/Re-ID 分支
+  -> 如果该毛色存在多只猫，拒绝强行确认并保留候选，等待后续 Re-ID
   -> 同步做 feeding_head 吃饭检测
   -> RTMPose 关键点质量门控与姿态状态判定
   -> 记录可播报事件
@@ -56,7 +144,7 @@ Python 环境 /opt/eating-behavior/conda-env、系统 Node 与 /etc 下的服务
 - `cat_passed`：兼容事件名，实际语义是画面内出现任意猫以及持续在场的周期提醒；默认每 30 分钟最多提醒一次，无法确认身份时 `cat_name` 留空。
 - `cat_eating`：猫咪吃饭，附带猫咪身份；当前帧无法确认时参考最近身份时间线，仍无法确认则 `cat_name` 留空。
 - `cat_posture_changed`：猫咪首次确认姿态或在吃饭、趴卧、站立、蹲姿之间切换；同一姿态不重复记录，猫消失或姿态质量不足时保留上一次状态。
-- `bowl_food_status`：碗内余粮监控占位，后续补充具体模型和规则。
+- `bowl_food_status`：碗内余粮监控占位；当前默认配置 `emit_bowl_placeholder: false`，不会输出该事件。
 
 播报方式暂不在第一版实现中固定，当前只负责把事件结构化记录到文件，后续可以接语音、App 推送、WebSocket 或其他消费端。
 
@@ -89,7 +177,7 @@ source_id -> household_id
 household_id -> cats
 ```
 
-中心数据库保存万级全量客户关系；每个推理进程只加载调度系统分配给自己的 20 路以上视频源数据。
+中心数据库保存万级全量客户关系；每个推理进程只加载调度系统分配给自己的视频源小快照。当前单进程会按配置顺序处理视频源，不提供多路并发；生产并发应由外部调度多个 worker，并以真实压测确定单 worker 容量。
 
 ### 0.1.1 Worker 本地配置快照
 
@@ -286,7 +374,7 @@ coat_class -> candidate cats
 
 ## 1. 项目目标
 
-正式项目的目标是把当前原型脚本整理成稳定、可维护、可评估的推理系统：
+正式项目的目标是提供稳定、可维护、可评估的推理系统。下图是目标链路，其中图库 Re-ID 和自动评估/诊断尚未全部实现：
 
 ```text
 视频输入
@@ -299,15 +387,15 @@ coat_class -> candidate cats
   -> 输出 CSV / JSON / 可视化视频 / 诊断报告
 ```
 
-第一阶段重点支持两个能力：
+当前已落地的核心能力：
 
 1. **进食事件检测**：输出吃饭开始时间、结束时间和持续时长。
-2. **进食猫咪身份识别**：在检测到进食后，判断正在吃饭的是哪只猫；事件输出中低置信度身份留空，内部诊断和评估仍保留 `unknown` 状态。
+2. **家庭范围身份路由**：在检测到进食后，按稳定视频源、家庭和毛色缩小候选；同毛色只有一只猫时确认身份，多只时保持 `unknown`，不强行给出猫名。
 
 后续可扩展：
 
+- 同毛色多猫的图库 embedding / Re-ID。
 - 猫出现事件的整猫身份识别。
-- 品种/外观类型分流。
 - 多猫切换事件切分。
 - 评估报告自动生成。
 
@@ -316,13 +404,16 @@ coat_class -> candidate cats
 ### 2.1 正式推理运行时负责
 
 - 加载经过路径和 SHA-256 校验的 YOLO 检测权重。
-- 加载外部训练好的分类模型或 embedding 模型。
-- 构建和读取猫咪身份图库 embedding。
+- 加载经过相同安全校验的毛色/外观分类模型。
+- 对检测结果执行项目侧 class-aware NMS，避免端到端权重绕过 Ultralytics NMS 后出现重复框。
+- 按稳定 `source_id` 和家庭配置完成毛色分流、单候选身份直判与同毛色多候选拒识。
 - 对视频、文件夹、摄像头或流媒体做推理。
 - 将帧级检测结果转换成进食事件。
 - 将帧级身份结果聚合成事件级猫名。
-- 输出结构化结果、可视化视频、错误诊断素材。
-- 对外部模型版本做离线评估和回归检查。
+- 可选执行 RTMPose、姿态质量门控、track 内关键点过滤和姿态状态判定。
+- 输出结构化事件、实时叠加画面、批量标注视频和姿态诊断汇总。
+
+图库 embedding Re-ID、余粮状态模型和完整自动评估报告尚未进入正式运行时，见第 12 节的待办项。
 
 ### 2.2 仓库内的离线研发工具
 
@@ -346,25 +437,30 @@ coat_class -> candidate cats
 
 离线工具产出候选模型后，正式推理子系统只负责受控接入、推理、评估和反馈问题。
 
-## 3. 当前原型代码参考
+## 3. 当前实现
 
-当前 `Eating_behavior_project` 已经有一版可运行原型，正式项目会从这些脚本中迁移推理逻辑：
+原型迁移已经完成到正式包结构，运行入口为 `eating_behavior.main:main`：
 
-| 原型文件 | 当前职责 | 正式项目迁移方向 |
-| --- | --- | --- |
-| `detect_eating.py` | YOLO 进食检测、状态机、事件输出 | 检测模块、状态机模块、CLI |
-| `detect_eating_identity.py` | 进食检测 + 身份识别 + 事件聚合 | 身份推理管线、事件身份聚合 |
-| `cat_identity.py` | DINOv2 / MegaDescriptor / ResNet 特征提取和图库匹配 | identity 核心库 |
-| `build_cat_gallery.py` | 从猫头图库构建 embedding | 图库构建 CLI |
-| `extract_cat_heads.py` | 从图片中自动裁剪猫头 | 数据工具脚本 |
-| `build_balanced_video_head_gallery.py` | 为高相似猫构建平衡图库 | 诊断/实验工具 |
-| `diagnose_identity_vectors.py` | 身份错误向量诊断 | diagnostics 模块 |
-| `cut_test_eating_clips.py` | 裁剪事件片段和标签点片段 | review clips 工具 |
-| `run_all_videos_visual.py` | 批量可视化运行 | batch CLI |
+| 文件/目录 | 当前职责 |
+| --- | --- |
+| `src/eating_behavior/main.py` | 单路调试与多路 worker CLI，参数校验和配置加载 |
+| `src/eating_behavior/pipeline.py` | 检测、毛色、身份、姿态、状态机与事件编排 |
+| `src/eating_behavior/models.py` | YOLO 模型加载、制品路径/SHA-256 校验、检测结果转换和显式 NMS |
+| `src/eating_behavior/identity.py` | 按 source/家庭隔离的猫注册表、身份决策和近期身份时间线 |
+| `src/eating_behavior/eating_state.py` | 秒级进食进入/退出、短间隔合并和事件身份聚合 |
+| `src/eating_behavior/presence_state.py` | 猫在场状态与周期提醒 |
+| `src/eating_behavior/tracking.py` | source 内临时姿态 track；不作为猫身份 |
+| `src/eating_behavior/pose.py`、`pose_filter.py`、`posture.py` | RTMPose 接入、质量门控、关键点时序过滤和姿态判定 |
+| `src/eating_behavior/events.py` | 带 `record_id` 的 JSONL/CSV 增量记录、重试和进程内幂等 |
+| `src/eating_behavior/visualization.py` | 实时与批量共用的检测框、毛色、姿态和骨架叠加 |
+| `tools/run_batch_test.py` | 有界 MP4 批处理、H.264 标注视频、原音轨复用和姿态诊断汇总 |
+| `web/stream-viewer/` | 独立的登录保护 HLS 观看页及 Nginx/systemd 部署样例 |
 
-正式项目不会直接照搬单文件脚本结构，而是拆成库模块和命令行入口。
+旧目录 `Eating_behavior_project` 仅作为历史原型参考，不是当前正式运行入口。
 
 ## 4. 设计原则
+
+本节 4.2–4.5 描述后续图库 Re-ID 的设计约束。当前版本只实现毛色分类、家庭内单候选直判以及多候选拒识；尚未实现图库构建和 embedding 检索命令。
 
 ### 4.1 YOLO 不直接识别猫身份
 
@@ -549,109 +645,91 @@ final_score =
 
 正式项目中，这个能力应作为 `pattern-aware identity branch` 可选开启，不替代原有 embedding 身份识别，只作为同花色非纯色猫的辅助分数来源。
 
-## 5. 推荐项目结构
+## 5. 当前项目结构
 
 ```text
 Eating_behavior_formal_project/
   README.md
   pyproject.toml
   configs/
-    paths.yaml
     models.yaml
-    detection.yaml
-    identity.yaml
-    evaluation.yaml
+    pipeline.yaml
+    rtmpose/
+  requirements/
+    rtmpose-cu121.txt
   src/
     eating_behavior/
-      __init__.py
-      config/
-        loader.py
-        schemas.py
-      detection/
-        yolo_detector.py
-        eating_state_machine.py
-        event_postprocess.py
-      identity/
-        feature_extractor.py
-        gallery.py
-        matcher.py
-        event_identity.py
-      media/
-        source_resolver.py
-        video_reader.py
-        video_writer.py
-      evaluation/
-        label_reader.py
-        event_metrics.py
-        identity_metrics.py
-        reports.py
-      diagnostics/
-        identity_timeline.py
-        vector_diagnostics.py
-        review_clips.py
-      visualization/
-        overlay.py
-      cli/
-        detect_eating.py
-        build_gallery.py
-        detect_identity.py
-        evaluate.py
-        diagnose_identity.py
-  scripts/
-    migrate_from_prototype.py
-    run_batch.py
-    cut_review_clips.py
+      main.py
+      pipeline.py
+      models.py
+      identity.py
+      eating_state.py
+      presence_state.py
+      association.py
+      tracking.py
+      pose.py
+      pose_filter.py
+      posture.py
+      events.py
+      media.py
+      visualization.py
+  tools/
+    run_batch_test.py
+    *pose*.py
+  training/
+    README.md
+    rtmpose/
+    train*.py
   docs/
-    model_inputs.md
-    data_interfaces.md
-    output_formats.md
-    evaluation_protocol.md
-    troubleshooting.md
+    realtime_pipeline.md
+    rtmpose_integration.md
+    camera_stream_protocol_spec.md
+    feeder_waterer_*.md
+    cat_pose_annotation_guide.md
   tests/
-    test_state_machine.py
-    test_event_postprocess.py
-    test_identity_matcher.py
-  data/
-    gallery/
-      head/
-      body/
-    embeddings/
-      head/
-      body/
-    evaluation/
+    test_*.py
+  web/
+    stream-viewer/
   outputs/
-    eating_detection/
-    eating_identity/
-    diagnostics/
-    reports/
 ```
 
 目录说明：
 
-- `configs/`：统一管理路径、模型权重、阈值和输出目录。
+- `configs/`：模型制品、安全边界、视频源、家庭猫信息和推理阈值。
 - `src/eating_behavior/`：正式库代码。
-- `src/eating_behavior/cli/`：命令行入口。
-- `scripts/`：一次性迁移和批处理工具。
-- `docs/`：数据接口、输出格式、模型接入和排错文档。
-- `tests/`：状态机、事件合并、身份匹配等核心逻辑测试。
-- `data/gallery/`：本项目使用的猫咪注册图库。
-- `data/embeddings/`：图库 embedding 产物。
-- `outputs/`：推理、诊断、评估结果。
+- `tools/`：批量验证、姿态数据构建、审计和质检工具。
+- `training/`：离线实验入口；不被正式运行时导入。
+- `docs/`：实时链路、RTMPose、摄像头、采集和标注说明。
+- `tests/`：正式运行时与离线工具的回归测试。
+- `web/stream-viewer/`：独立部署的 HLS 观看端。
+- `outputs/`：运行时生成目录，已被 Git 和发布压缩包排除。
 
 ## 6. 外部输入
 
 ### 6.1 模型权重
 
-本项目通过配置文件读取外部模型：
+本项目通过 `configs/models.yaml` 读取外部模型。`.pt`/`.pth` 内部使用 pickle，只有在 `security.allow_pickle_weights: true`、路径位于 `security.allowed_roots` 且 SHA-256 完全匹配时才允许加载：
 
 ```yaml
-detection_model: D:/gogelila/Eating_behavior/yolo/runs/.../best.pt
-breed_classifier_model: D:/gogelila/Eating_behavior/yolo/runs_cls/.../best.pt
-feature_backend: dinov2
-feature_model: facebook/dinov2-small
+detection_model: /root/Eating_behavior/models/detection_best.pt
+detection_model_sha256: <64位十六进制摘要>
+coat_classifier_model: /root/Eating_behavior/models/coat_classifier_best.pt
+coat_classifier_model_sha256: <64位十六进制摘要>
+
+pose:
+  config: /root/Eating_behavior/models/rtmpose_config.py
+  config_sha256: <64位十六进制摘要>
+  checkpoint: /root/Eating_behavior/models/rtmpose_checkpoint.pth
+  checkpoint_sha256: <64位十六进制摘要>
+
+security:
+  allow_pickle_weights: true
+  require_sha256: true
+  allowed_roots:
+    - /root/Eating_behavior/models
 ```
 
-模型来源由训练项目保证，本项目只校验文件是否存在、类别是否符合要求、推理输出是否可解析。
+`pose` 四个值在 `pose.enabled: false` 时可以留空。`identity_gallery`、`feature_backend` 和 `feature_model` 当前为未来 Re-ID 预留字段。
 
 ### 6.2 视频输入
 
@@ -671,6 +749,8 @@ RTSP / HTTP 视频流
 ```
 
 ### 6.3 身份图库
+
+以下目录是后续 embedding Re-ID 的输入约定，当前版本尚无正式图库构建 CLI：
 
 头部图库：
 
@@ -696,7 +776,7 @@ data/gallery/body/
 
 ### 6.4 评估标签
 
-评估标签建议使用结构化 CSV：
+后续自动评估接口建议使用结构化 CSV：
 
 ```text
 source
@@ -708,9 +788,124 @@ scene_type
 notes
 ```
 
-也可以兼容当前原型中的 `0000.txt` 标签形式，但正式项目内部应统一转换为标准表。
+后续评估导入工具也可以兼容历史原型中的 `0000.txt` 标签形式，但正式项目内部应统一转换为标准表。
 
-## 7. 核心流程
+### 6.5 Label Studio 视频时间轴标注项目
+
+服务器上的 Label Studio 已建立独立视频标注项目，用于记录猫咪出现/消失和进食行为的时间区间：
+
+| 项目 | 内容 |
+| --- | --- |
+| 项目名称 | `cat_behavior_video_20260602_05_20` |
+| 项目 ID | `18` |
+| 视频来源 | `/data/2026_06_02/05` 中按名称排序选取的 20 个 MP4 |
+| 标注标签 | `presence`（出现到消失的在场区间）、`eating`、`drinking` |
+| 辅助字段 | 标注完成/存在不确定片段、备注 |
+| 项目入口 | `http://39.106.120.253/projects/18/data` |
+
+视频通过 `/data/label_studio/local_files/` 下的硬链接提供给 Label Studio，不复制原始媒体；20 个任务均已通过 HTTP Range 分段读取验证。源视频是 H.265/HEVC，服务端读取正常，但标注浏览器仍需具备 HEVC 解码能力；无法播放时应先转码为 H.264。Label Studio 是外部标注环境，不是本仓库的运行依赖。
+
+### 6.6 服务器数据盘存储
+
+服务器 `39.106.120.253` 上的代码与大文件数据分开存放：
+
+- Git 项目目录：`/root/Eating_behavior`
+- 数据盘挂载点：`/data`
+- 项目数据根目录：`/data/Eating_behavior`
+- YOLO 检测数据集：`/data/Eating_behavior/v9_yolo26`
+
+截至 2026-07-27 的扫描快照：
+
+| 项目 | 扫描结果 |
+| --- | --- |
+| 块设备 | `/dev/vdb1` |
+| 挂载点 / 文件系统 | `/data` / `ext4` |
+| 总容量 | 1006.9 GiB |
+| 已使用 | 288.2 GiB |
+| 可用 | 667.4 GiB |
+| 使用率 | 29% |
+| `/data/Eating_behavior` | 约 29–30 GiB（目录仍可能被训练任务写入） |
+| `v9_yolo26` 解压目录 | 约 12 GiB |
+| `v9_yolo26.zip` 历史快照 | 约 11 GiB，2026-07-22 生成 |
+
+`/data/Eating_behavior` 的主要内容如下：
+
+| 路径 | 大小 / 说明 |
+| --- | --- |
+| `v9_yolo26/` | 约 12 GiB，当前检测训练数据集 |
+| `v9_yolo26.zip` | 约 11 GiB，静态历史快照，不会随解压目录自动更新 |
+| `cls_v2/` | 约 2.6 GiB |
+| `test_outputs/` | 约 2.2 GiB |
+| `rtmpose/` | 约 2.1 GiB |
+| `yolo26_pose/` | 约 793 MiB |
+| `cat_pose_annotation_seed_800/` | 约 415 MiB |
+| `cat_pose_annotation_seed_230/` | 约 69 MiB |
+| `cat_pose_annotation_seed_230_yolo_pose_before_export_20260629_173612/` | 约 67 MiB |
+| `cat_pose_v1/` | 约 55 MiB |
+| `cat_pose_v1_k4v1_to_v0/` | 约 55 MiB |
+| `cat_pose_v2` | 指向 `/data/Eating_behavior/yolo26_pose/cat_pose_v2` 的符号链接 |
+
+检测数据集采用标准 YOLO 目录结构：
+
+```text
+/data/Eating_behavior/v9_yolo26/
+  data.yaml
+  classes.txt
+  build_summary.json
+  images/
+    train/
+    val/
+    test/
+  labels/
+    train/
+    val/
+    test/
+  audits/
+```
+
+服务器端 `data.yaml` 使用绝对数据集根路径：
+
+```yaml
+path: /data/Eating_behavior/v9_yolo26
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: cat
+  1: feeding_head
+```
+
+2026-07-28 完成三轮 RTSP211 难例差量同步后的有效文件计数为：
+
+| split | images | labels | RTSP211 新样本 |
+| --- | ---: | ---: | ---: |
+| `train` | 3509 | 3509 | 19 |
+| `val` | 1001 | 1001 | 4 |
+| `test` | 500 | 500 | 2 |
+
+数据盘维护约定：
+
+- 大型数据集、权重和推理产物只放在 `/data/Eating_behavior`，不要提交到 `/root/Eating_behavior` 的 Git 工作区。
+- 图片与标签必须按同一 stem 成对存放；空场景硬负样本也必须保留同名的 0 字节 `.txt` 标签。
+- 差量同步必须携带 SHA256 清单，并在临时目录校验通过、确认目标无同名冲突后再落盘。
+- 新增难例的审计图放在 `audits/`，增补清单放在数据集根目录；当前对应 `rtsp211_20260727*_manifest.json` 和 `rtsp211_20260728_round3_augmentation_manifest.json`。
+- `labels/*.cache` 是 Ultralytics 生成的缓存，不是数据源；图片或标签变化后应由 Ultralytics 按内容哈希自动重建。
+- `v9_yolo26.zip` 是静态历史快照。截至 2026-07-28 的差量不应被视为已自动写入该 ZIP；需要归档时必须重新生成并单独校验。
+
+容量和文件数量会随训练与增量数据变化，可在服务器上重新检查：
+
+```bash
+findmnt -T /data/Eating_behavior
+du -h --max-depth=1 /data/Eating_behavior | sort -h
+for split in train val test; do
+  find /data/Eating_behavior/v9_yolo26/images/$split -maxdepth 1 -type f | wc -l
+  find /data/Eating_behavior/v9_yolo26/labels/$split -maxdepth 1 -type f -name '*.txt' | wc -l
+done
+```
+
+## 7. 进食与 Re-ID 流程
+
+当前已实现 7.2 的秒级进食状态机、事件身份聚合和内部近期身份时间线。7.1、7.3–7.5 是图库 Re-ID 与自动诊断的目标接口，尚不能通过独立 CLI 调用。
 
 ### 7.1 构建身份图库
 
@@ -851,15 +1046,15 @@ crop_path
 - 标签点附近局部窗口身份结果。
 - 对应视频 review clip。
 
-## 8. 身份打分策略
+## 8. 后续 Re-ID 身份打分策略
 
-当前原型使用：
+历史原型使用：
 
 ```text
 topk_mean
 ```
 
-正式项目需要支持参数化：
+后续图库 Re-ID 需要支持参数化：
 
 | 策略 | 说明 |
 | --- | --- |
@@ -869,102 +1064,93 @@ topk_mean
 
 银渐层等高相似猫建议优先对比 `best_single` 和 `weighted_topk`，并配合更严格 margin。
 
-## 9. 配置文件建议
+## 9. 当前配置文件
 
-### 9.1 `configs/paths.yaml`
+项目运行时只读取两个顶层配置文件：
 
-```yaml
-project_root: D:/gogelila/Eating_behavior/Eating_behavior_formal_project
-gallery_head_dir: data/gallery/head
-gallery_body_dir: data/gallery/body
-embedding_head_dir: data/embeddings/head
-output_dir: outputs
-```
+| 文件 | 用途 |
+| --- | --- |
+| `configs/models.yaml` | 检测、毛色分类和可选 RTMPose 制品路径、SHA-256 与允许根目录 |
+| `configs/pipeline.yaml` | 检测阈值、NMS、姿态、跟踪、关联、worker 视频源、家庭猫信息、事件和输出策略 |
 
-### 9.2 `configs/models.yaml`
+常用配置块：
 
-```yaml
-detection_model: D:/gogelila/Eating_behavior/yolo/runs/cat_feeding_head/weights/best.pt
-classifier_model: D:/gogelila/Eating_behavior/yolo/runs_cls/cat_breed/weights/best.pt
-feature_backend: dinov2
-feature_model: facebook/dinov2-small
-```
+- `detection`：`confidence`、`iou`、项目侧 `nms_iou`、`imgsz` 和类别名。
+- `coat`：分类输入尺寸、最小 crop 面积、置信度和 margin。
+- `pose`：是否启用 RTMPose，以及质量门控、时序过滤和姿态规则。
+- `tracking`：仅供姿态分支使用的 source 内临时 track 参数。
+- `association`：`feeding_head` 与 cat 框的距离限制和歧义拒绝阈值。
+- `worker` / `sources`：本 worker 允许处理的稳定摄像头 ID 与实际流地址。
+- `identity.households`：家庭、摄像头与猫咪毛色注册关系。
+- `events`：进食时间门控、身份历史、在场提醒和占位事件开关。
+- `output`：事件文件开关与内存中保留的近期事件上限。
 
-### 9.3 `configs/detection.yaml`
-
-```yaml
-feeding_classes:
-  - feeding_head
-confidence: 0.25
-iou: 0.70
-imgsz: 640
-enter_seconds: 2.0
-exit_seconds: 5.0
-merge_gap_seconds: 10.0
-min_event_seconds: 2.0
-vid_stride: 1
-```
-
-### 9.4 `configs/identity.yaml`
+生产快照建议设置：
 
 ```yaml
-gallery: data/embeddings/head/cat_gallery_embeddings.npz
-crop_padding: 0.15
-score_mode: topk_mean
-top_k: 3
-min_score: 0.55
-min_margin: 0.05
-event_confirm_ratio: 0.60
+worker:
+  source_ids:
+    - cam_customer_a_01
+  require_assignments: true
+  allow_debug_source: false
 ```
 
-## 10. 命令行规划
+这样 worker 不能通过临时 CLI 参数扩大自己的视频源授权范围。原始 RTSP/HTTP 地址可能含凭据，不应提交到 Git 或打进分发压缩包；生产环境应在部署时注入 worker 专属配置快照。
 
-构建头部图库：
+## 10. 当前命令行
+
+### 10.1 单路调试
 
 ```powershell
-python -m eating_behavior.cli.build_gallery `
-  --gallery-type head `
-  --input data/gallery/head `
-  --output data/embeddings/head `
-  --config configs/models.yaml
+python -m eating_behavior.main `
+  --source D:\path\to\video_or_directory `
+  --source-id cam_debug_01 `
+  --models-config configs/models.yaml `
+  --pipeline-config configs/pipeline.yaml `
+  --output-dir outputs/realtime_debug `
+  --device 0 `
+  --vid-stride 1 `
+  --show
 ```
 
-检测进食事件：
+输入可以是视频文件、视频目录、摄像头编号、RTSP 或 HTTP 流。网络流必须提供 `--source-id`；一个 `--source` 最多绑定一个 ID。调试时可用 `--max-frames` 限制帧数。
+
+### 10.2 配置驱动 worker
 
 ```powershell
-python -m eating_behavior.cli.detect_eating `
-  --source D:\path\to\video_or_dir `
-  --config configs/detection.yaml `
-  --output outputs/eating_detection
+python -m eating_behavior.main `
+  --models-config configs/models.yaml `
+  --pipeline-config configs/worker_01.pipeline.yaml `
+  --output-dir outputs/worker_01
 ```
 
-检测进食身份：
+省略 `--source` 时读取 `worker.source_ids`。该列表为空则处理快照中全部 `sources`；也可以重复传入 `--source-id`，临时选择授权范围内的部分源。
+
+### 10.3 批量验证
 
 ```powershell
-python -m eating_behavior.cli.detect_identity `
-  --source D:\path\to\video_or_dir `
-  --detection-config configs/detection.yaml `
-  --identity-config configs/identity.yaml `
-  --output outputs/eating_identity
+python tools/run_batch_test.py `
+  --input-root D:\path\to\mp4_root `
+  --output-root outputs\batch_run_001 `
+  --models-config configs/models.yaml `
+  --pipeline-config configs/pipeline.yaml `
+  --limit 20 `
+  --device 0 `
+  --progress-every 200
 ```
 
-评估模型结果：
+批处理递归选择排序后的前 N 个 `.mp4`，输出带框、毛色、姿态和骨架的 H.264 视频，并尽量复制原视频音轨。输出根目录已存在时会直接拒绝运行。
+
+### 10.4 Web 观看端
+
+`web/stream-viewer/` 是独立的 Node.js `>=22` 服务，只负责登录、会话和页面；Nginx 使用 `auth_request` 保护 MediaMTX 低延迟 HLS。部署前先执行：
 
 ```powershell
-python -m eating_behavior.cli.evaluate `
-  --pred outputs/eating_identity/identity_events_all.csv `
-  --labels data/evaluation/labels.csv `
-  --config configs/evaluation.yaml
+cd web\stream-viewer
+npm run check
 ```
 
-身份错误诊断：
-
-```powershell
-python -m eating_behavior.cli.diagnose_identity `
-  --labels data/evaluation/error_points.csv `
-  --gallery data/embeddings/head/cat_gallery_embeddings.npz `
-  --output outputs/diagnostics
-```
+环境变量、scrypt 密码摘要、Nginx 和 systemd 示例见 `web/stream-viewer/README.md`。源码和部署样例不包含真实账号、密码或媒体服务凭据。
 
 ## 11. 评估指标
 
@@ -1008,81 +1194,80 @@ wrong_confirm_rate
 - 高相似猫是否 top1/top2 margin 过小。
 - 图库是否缺少低头、头顶、后脑、同摄像头样本。
 
-## 12. 第一阶段实施计划
+## 12. 实现状态与后续工作
 
-### 阶段 1：工程骨架
+截至 2026-08-19：
 
-- 建立 `src/eating_behavior/`。
-- 建立 `configs/`。
-- 建立 `data/gallery`、`data/embeddings`、`outputs` 目录约定。
-- 准备 `pyproject.toml` 或正式依赖文件。
+| 能力 | 状态 |
+| --- | --- |
+| 正式 Python 包、配置加载与 CLI | 已实现 |
+| 模型路径、允许根目录和 SHA-256 校验 | 已实现 |
+| 视频/目录/摄像头/RTSP/HTTP 输入 | 已实现 |
+| `cat` / `feeding_head` 检测和项目侧 NMS | 已实现 |
+| 毛色分类、家庭隔离和单候选身份直判 | 已实现 |
+| 多候选拒识、近期同毛色身份复用和事件级聚合 | 已实现 |
+| 进食状态机、猫在场提醒和姿态变化事件 | 已实现 |
+| RTMPose、姿态 track、质量门控和时序过滤 | 已实现，可选启用 |
+| JSONL/CSV 增量记录、`record_id` 与失败重试 | 已实现 |
+| 实时叠加窗口与批量标注视频 | 已实现 |
+| 登录保护的 HLS Web 观看端 | 已实现，独立部署 |
+| 图库 embedding Re-ID | 待实现 |
+| `bowl_food_status` 真实余粮模型 | 待实现；默认不发占位事件 |
+| 自动指标、混淆矩阵和 review clip 报告 | 待实现 |
+| 跨进程/重启后的持久化事件去重与待发恢复 | 待实现 |
 
-### 阶段 2：迁移进食检测
-
-- 从 `detect_eating.py` 迁移 YOLO 推理封装。
-- 迁移 `EatingStateMachine`。
-- 迁移事件合并和 CSV / JSON 输出。
-- 添加状态机和事件合并单元测试。
-
-### 阶段 3：迁移身份识别
-
-- 从 `cat_identity.py` 迁移 feature extractor。
-- 迁移 gallery builder。
-- 迁移 matcher。
-- 增加 `score_mode` 参数。
-- 支持 `head_gallery` 第一版。
-
-### 阶段 4：补充诊断和评估
-
-- 输出 `identity_timeline.csv`。
-- 实现标签点局部窗口评估。
-- 输出 top matches、contact sheet、query embedding。
-- 生成 review clips。
-
-### 阶段 5：外部训练项目反馈闭环
-
-- 根据评估结果整理错误样例。
-- 输出需要补充的数据类型。
-- 记录模型版本、图库版本、评估报告版本。
-- 将问题反馈给训练项目，而不是在本项目中训练。
+后续实现图库 Re-ID 时，应先补齐 feature extractor、gallery builder、matcher、阈值评估和错误诊断，再把候选模型登记到受控制品配置中；不能让离线训练结果自动进入生产。
 
 ## 13. 输出目录约定
 
+实时入口实际输出：
+
 ```text
 outputs/
-  eating_detection/
-    events_all.csv
-    events_all.json
-    *_events.csv
-    *_annotated.mp4
-  eating_identity/
-    identity_events_all.csv
-    identity_events_all.json
-    identity_timeline.csv
-    *_identity_annotated.mp4
-  diagnostics/
-    identity_vector_diagnostics.csv
-    query_crops/
-    contact_sheets/
-    top_matches/
-    review_clips/
-  reports/
-    event_metrics.json
-    identity_metrics.json
-    confusion_matrix.csv
+  realtime_debug/
+    announcement_events.jsonl
+    announcement_events.csv
 ```
 
-## 14. 最终定位
+批量工具实际输出：
 
-本项目最终保持为清晰的推理工程：
+```text
+outputs/
+  batch_run_001/
+    effective_pipeline.yaml
+    batch_summary.json
+    events/
+      announcement_events.jsonl
+      announcement_events.csv
+    videos/
+      <保留输入相对目录>/<视频名>_annotated.mp4
+```
+
+事件采用增量追加方式写入，JSONL 顶层包含稳定 `record_id`，CSV 的 `details_json._record_id` 保存同一值。运行时只保留有界的近期事件尾部；下游仍应按 `record_id` 做幂等消费。`outputs/` 属于运行产物，不提交 Git，也不收入源码发布压缩包。
+
+## 14. 分发压缩包约定
+
+源码压缩包包含当前工作树中的代码、配置模板、测试、工具、训练入口、Web 观看端和 Markdown 文档，并保持顶层 `Eating_behavior_formal_project/` 目录。以下内容必须排除：
+
+- `.git/`、`.codex_tmp/` 和编辑器/代理临时文件。
+- `__pycache__/`、`.pytest_cache/`、`.mypy_cache/`、`.ruff_cache/`、`node_modules/`。
+- `outputs/`、训练日志、预测结果和其他可再生成产物。
+- 模型权重、数据集、embedding、真实流地址、账号密码、Cookie 密钥和其他凭据。
+
+解压后需要单独准备模型制品与 worker 配置，安装依赖并运行测试；源码包本身不是包含模型和数据的一键离线镜像。
+
+## 15. 最终定位
+
+本项目保持为边界清晰的推理工程：
 
 ```text
 外部训练项目
   -> 输出模型权重
-  -> 本项目接入权重、图库和视频
-  -> 本项目完成推理、事件、身份、评估、诊断
+  -> 经过校验后登记模型路径和 SHA-256
+  -> 本项目接入权重、worker 配置和视频源
+  -> 本项目完成推理、事件、身份路由、姿态和批量诊断
   -> 本项目输出错误样例和改进建议
   -> 反馈给外部训练项目继续训练
 ```
 
-项目内不放训练代码，不启动训练任务，不维护训练流水线。这里要做的是把模型用好、评估清楚、问题定位准确。
+正式运行时不启动训练任务，也不依赖训练数据或 W&B。仓库内保留的 `training/` 只用于离线研发，必须与 `src/eating_behavior/` 和生产 worker 镜像隔离。这里要做的是把模型安全地接入、把事件稳定地输出、把问题准确地定位。
