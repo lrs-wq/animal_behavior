@@ -1,18 +1,18 @@
 # YOLO detector for cat and feeding_head boxes.
-detection_model: /root/Eating_behavior/models/detection_best.pt
+detection_model: /data/Eating_behavior/models/detection_best.pt
 detection_model_sha256: 7c1219e2ff84ab24df8e242b6a3c4ea7690cae75cd5afd1c456aaecb41b6d144
 
 # Coat/appearance classifier. Class names must match identity cats coat_class.
-coat_classifier_model: /root/Eating_behavior/models/coat_classifier_best.pt
+coat_classifier_model: /data/Eating_behavior/models/coat_classifier_best.pt
 coat_classifier_model_sha256: a1b832acf1155c5671d4cac8848d15427daf854e1bb68042231ddaa32a89d322
 
 # Production RTMPose top-down model. Keep the config/checkpoint pair under the
-# controlled model root and pin both SHA-256 values before enabling pose
+# controlled roots: Python config under /root, weights under /data; pin both SHA-256 values before enabling pose
 # inference in configs/pipeline.yaml.
 pose:
   config: /root/Eating_behavior/models/rtmpose/cat_pose_v2_clean516_ap10k.py
   config_sha256: ca887cff59457f72ab6f639d417f8638f65c9626ea7dd1df9e3b7a5624296bc7
-  checkpoint: /root/Eating_behavior/models/rtmpose/rtmpose_m_camera05_realbbox_stage2_epoch140-56b9fb51_20260715.pth
+  checkpoint: /data/Eating_behavior/models/rtmpose/rtmpose_m_camera05_realbbox_stage2_epoch140-56b9fb51_20260715.pth
   checkpoint_sha256: 56b9fb5165a3a2cc298fd135bba964f45cffebe6e14a6abe416dd51f0705d3ec
 
 security:
@@ -21,7 +21,8 @@ security:
   allow_pickle_weights: true
   require_sha256: true
   allowed_roots:
-    - /root/Eating_behavior/models
+    - /data/Eating_behavior/models
+    - /root/Eating_behavior/models/rtmpose
 
 # Reserved for future Re-ID or embedding-gallery identity backends.
 identity_gallery:

@@ -69,3 +69,36 @@ def test_inference_interval_accepts_three(monkeypatch) -> None:
     )
 
     assert live_recording.parse_args().inference_interval == 3
+
+
+def test_live_source_is_resolved_from_sqlite_registry(tmp_path, monkeypatch):
+    from eating_behavior.alerts import EventStore
+
+    store = EventStore(tmp_path / "events.sqlite3", create=True)
+    output = tmp_path / "live"
+    store.bind("camera02", 20001, "rtmp://127.0.0.1/live/test",
+               output / "events/announcement_events.jsonl", username="test-user")
+    monkeypatch.setattr(sys, "argv", [
+        "live", "--source-db", str(store.path), "--source-id", "camera02",
+        "--output-root", str(output), "--models-config", "/tmp/models.yaml",
+        "--pipeline-config", "/tmp/pipeline.yaml",
+    ])
+    args = live_recording.parse_args()
+    assert args.source == "rtmp://127.0.0.1/live/test"
+    assert args.source_registry_revision == 1
+
+
+def test_registry_source_rejects_another_event_output(tmp_path, monkeypatch):
+    import pytest
+    from eating_behavior.alerts import EventStore
+
+    store = EventStore(tmp_path / "events.sqlite3", create=True)
+    store.bind("camera02", 20001, "rtmp://127.0.0.1/live/test",
+               tmp_path / "assigned/events/announcement_events.jsonl", username="test-user")
+    monkeypatch.setattr(sys, "argv", [
+        "live", "--source-db", str(store.path), "--source-id", "camera02",
+        "--output-root", str(tmp_path / "wrong"), "--models-config", "/tmp/models.yaml",
+        "--pipeline-config", "/tmp/pipeline.yaml",
+    ])
+    with pytest.raises(SystemExit):
+        live_recording.parse_args()

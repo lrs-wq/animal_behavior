@@ -4,7 +4,13 @@
   "display_name": "Eating Behavior",
   "description": "猫咪视频流检测、身份确认、进食与姿态事件推理工程。",
   "status": "active",
-  "domains": ["cat-behavior", "realtime-video", "pose-estimation", "identity", "events"],
+  "domains": [
+    "cat-behavior",
+    "realtime-video",
+    "pose-estimation",
+    "identity",
+    "events"
+  ],
   "entrypoints": [
     {
       "path": "src/eating_behavior/main.py",
@@ -37,6 +43,10 @@
     {
       "path": "web/stream-viewer/server.mjs",
       "purpose": "认证实时视频查看服务"
+    },
+    {
+      "path": "src/eating_behavior/alerts.py",
+      "purpose": "SQLite 整数用户 ID/用户名登记、旧库迁移、持久待发及 HTTPS 报警发送 CLI"
     }
   ],
   "verification": [
@@ -44,17 +54,32 @@
     "python -m py_compile tools/extract_every_50_frames.py tools/flatten_extracted_frames.py",
     "npm --prefix web/stream-viewer run check",
     "npm --prefix web/stream-viewer test",
-    "systemd-analyze verify deploy/systemd/eating-behavior-camera02-ai-live.service deploy/systemd/eating-behavior-camera02-annotated.service web/stream-viewer/deploy/joyai-stream-viewer.service"
+    "systemd-analyze verify deploy/systemd/eating-behavior-camera02-ai-live.service deploy/systemd/eating-behavior-camera02-annotated.service web/stream-viewer/deploy/joyai-stream-viewer.service deploy/systemd/eating-behavior-events.service"
   ],
   "source_docs": [
     "README.md",
     "docs/realtime_pipeline.md",
     "docs/rtmpose_integration.md",
     "docs/knowledge/DECISIONS/0001-camera02-analysis-path.md",
+    "docs/knowledge/DECISIONS/0002-camera02-persistent-runtime.md",
+    "docs/knowledge/DECISIONS/0003-server-code-data-layout.md",
     "web/stream-viewer/README.md",
-    "training/README.md"
+    "training/README.md",
+    "docs/backend_event_delivery.md",
+    "docs/knowledge/DECISIONS/0004-sqlite-backend-events.md",
+    "docs/knowledge/DECISIONS/0005-numeric-user-identity.md"
   ],
   "watch_rules": [
+    {
+      "paths": [
+        "AGENTS.md"
+      ],
+      "knowledge": [
+        "deployment",
+        "storage",
+        "model-governance"
+      ]
+    },
     {
       "paths": [
         "src/eating_behavior/main.py",
@@ -62,7 +87,12 @@
         "src/eating_behavior/media.py",
         "tools/run_live_annotated_recording.py"
       ],
-      "knowledge": ["pipeline", "source", "runtime", "live-inference"]
+      "knowledge": [
+        "pipeline",
+        "source",
+        "runtime",
+        "live-inference"
+      ]
     },
     {
       "paths": [
@@ -72,7 +102,12 @@
         "src/eating_behavior/pose.py",
         "src/eating_behavior/posture.py"
       ],
-      "knowledge": ["identity", "tracking", "pose", "posture"]
+      "knowledge": [
+        "identity",
+        "tracking",
+        "pose",
+        "posture"
+      ]
     },
     {
       "paths": [
@@ -80,34 +115,85 @@
         "src/eating_behavior/eating_state.py",
         "src/eating_behavior/presence_state.py"
       ],
-      "knowledge": ["event", "state-machine"]
+      "knowledge": [
+        "event",
+        "state-machine"
+      ]
     },
     {
-      "paths": ["configs/**", "src/eating_behavior/config.py", "src/eating_behavior/models.py"],
-      "knowledge": ["config", "model", "model-governance"]
+      "paths": [
+        "configs/**",
+        "src/eating_behavior/config.py",
+        "src/eating_behavior/models.py"
+      ],
+      "knowledge": [
+        "config",
+        "model",
+        "model-governance"
+      ]
     },
     {
-      "paths": ["web/stream-viewer/**"],
-      "knowledge": ["viewer", "deployment"]
+      "paths": [
+        "web/stream-viewer/**"
+      ],
+      "knowledge": [
+        "viewer",
+        "deployment"
+      ]
     },
     {
-      "paths": ["deploy/**"],
-      "knowledge": ["deployment"]
+      "paths": [
+        "deploy/**"
+      ],
+      "knowledge": [
+        "deployment"
+      ]
     },
     {
-      "paths": ["requirements/**", "requirements.txt", "pyproject.toml"],
-      "knowledge": ["dependency", "verification"]
+      "paths": [
+        "requirements/**",
+        "requirements.txt",
+        "pyproject.toml"
+      ],
+      "knowledge": [
+        "dependency",
+        "verification"
+      ]
     },
     {
       "paths": [
         "tools/extract_every_50_frames.py",
         "tools/flatten_extracted_frames.py"
       ],
-      "knowledge": ["training", "dataset-preparation", "privacy"]
+      "knowledge": [
+        "training",
+        "dataset-preparation",
+        "privacy"
+      ]
     },
     {
-      "paths": ["training/**"],
-      "knowledge": ["training", "model-candidate"]
+      "paths": [
+        "training/**"
+      ],
+      "knowledge": [
+        "training",
+        "model-candidate"
+      ]
+    },
+    {
+      "paths": [
+        "src/eating_behavior/alerts.py",
+        "tests/test_alerts.py",
+        "docs/backend_event_delivery.md"
+      ],
+      "knowledge": [
+        "event",
+        "source",
+        "user-mapping",
+        "storage",
+        "backend-api",
+        "deployment"
+      ]
     }
   ],
   "excluded_content": [
@@ -116,6 +202,8 @@
     "raw frames and videos",
     "model weights",
     "W&B cache and training data",
-    "production event contents"
+    "production event contents",
+    "backend API keys and environment values",
+    "SQLite user/RTMP registry, outbox and database backups"
   ]
 }

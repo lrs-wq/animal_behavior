@@ -2,7 +2,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 
-.pytest_cache/
+.pytest_cache
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -17,7 +17,7 @@ outputs/
 /data
 
 # Local W&B artifact cache may live outside training/.
-/.wandb_cache/
+/.wandb_cache
 
 # Operator snapshots and editor backups are not source.
 *.backup-*
@@ -40,7 +40,7 @@ outputs/
 build/
 dist/
 
-# Model artifacts are promoted to models/ out of band and pinned by SHA-256.
+# Model weights live under /data out of band and are pinned by SHA-256.
 *.pt
 *.pth
 *.onnx

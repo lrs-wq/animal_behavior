@@ -2,6 +2,7 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import { isAbsolute, resolve } from "node:path";
 
 const HOST = process.env.JOYAI_VIEWER_HOST || "127.0.0.1";
 const PORT = Number.parseInt(process.env.JOYAI_VIEWER_PORT || "8099", 10);
@@ -17,7 +18,7 @@ const ANALYSIS_ENABLED = /^(1|true|yes|on)$/i.test(
 );
 const ANALYSIS_STATUS_PATH =
   process.env.JOYAI_ANALYSIS_STATUS_PATH ||
-  "/run/eating-behavior-camera02-ai/status.json";
+  "/data/Eating_behavior/runtime/camera02-ai/status.json";
 const ANALYSIS_STATUS_MAX_AGE_SECONDS = Number.parseInt(
   process.env.JOYAI_ANALYSIS_STATUS_MAX_AGE_SECONDS || "15",
   10,
@@ -103,8 +104,16 @@ function assertConfiguration() {
   if (!Number.isInteger(SESSION_TTL_SECONDS) || SESSION_TTL_SECONDS < 300) {
     errors.push("JOYAI_VIEWER_SESSION_TTL_SECONDS 至少为 300 秒");
   }
-  if (!ANALYSIS_STATUS_PATH.startsWith("/run/")) {
-    errors.push("JOYAI_ANALYSIS_STATUS_PATH 必须位于 /run 下");
+  const resolvedStatusPath = resolve(ANALYSIS_STATUS_PATH);
+  if (
+    !isAbsolute(ANALYSIS_STATUS_PATH) ||
+    !["/run/", "/data/Eating_behavior/runtime/"].some((root) =>
+      resolvedStatusPath.startsWith(root),
+    )
+  ) {
+    errors.push(
+      "JOYAI_ANALYSIS_STATUS_PATH 必须位于 /run 或 /data/Eating_behavior/runtime 下",
+    );
   }
   if (
     !Number.isInteger(ANALYSIS_STATUS_MAX_AGE_SECONDS) ||

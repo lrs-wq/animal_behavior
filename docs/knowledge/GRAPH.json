@@ -7,7 +7,11 @@
       "type": "project",
       "name": "Eating Behavior",
       "status": "active",
-      "tags": ["猫咪", "实时推理", "行为识别"],
+      "tags": [
+        "猫咪",
+        "实时推理",
+        "行为识别"
+      ],
       "evidence": "README.md"
     },
     {
@@ -15,14 +19,22 @@
       "type": "pipeline",
       "name": "正式实时推理流水线",
       "path": "src/eating_behavior/pipeline.py",
-      "tags": ["video", "stream", "inference"],
+      "tags": [
+        "video",
+        "stream",
+        "inference"
+      ],
       "evidence": "src/eating_behavior/pipeline.py"
     },
     {
       "id": "eating.source.video",
       "type": "source",
       "name": "文件、目录、摄像头或 RTSP/HTTP 视频源",
-      "tags": ["source_id", "camera_id", "stream_url"],
+      "tags": [
+        "source_id",
+        "camera_id",
+        "stream_url"
+      ],
       "evidence": "README.md"
     },
     {
@@ -30,7 +42,11 @@
       "type": "config",
       "name": "流水线与 worker 配置",
       "path": "configs/pipeline.yaml",
-      "tags": ["sources", "worker", "identity"],
+      "tags": [
+        "sources",
+        "worker",
+        "identity"
+      ],
       "evidence": "configs/pipeline.yaml"
     },
     {
@@ -38,7 +54,11 @@
       "type": "config",
       "name": "生产模型注册表",
       "path": "configs/models.yaml",
-      "tags": ["model", "sha256", "controlled"],
+      "tags": [
+        "model",
+        "sha256",
+        "controlled"
+      ],
       "evidence": "configs/models.yaml"
     },
     {
@@ -47,7 +67,11 @@
       "name": "配置与 checkpoint 双 SHA-256 固定的生产 RTMPose",
       "path": "configs/models.yaml",
       "status": "active",
-      "tags": ["RTMPose", "sha256", "out-of-band-weight"],
+      "tags": [
+        "RTMPose",
+        "sha256",
+        "out-of-band-weight"
+      ],
       "evidence": "configs/models.yaml"
     },
     {
@@ -55,7 +79,11 @@
       "type": "module",
       "name": "猫检测、关联与跟踪",
       "path": "src/eating_behavior/tracking.py",
-      "tags": ["detector", "tracking", "association"],
+      "tags": [
+        "detector",
+        "tracking",
+        "association"
+      ],
       "evidence": "src/eating_behavior/tracking.py"
     },
     {
@@ -63,14 +91,23 @@
       "type": "module",
       "name": "家庭范围内毛色与猫身份判断",
       "path": "src/eating_behavior/identity.py",
-      "tags": ["source_id", "household_id", "cat_name", "coat_class"],
+      "tags": [
+        "source_id",
+        "household_id",
+        "cat_name",
+        "coat_class"
+      ],
       "evidence": "src/eating_behavior/identity.py"
     },
     {
       "id": "eating.rule.identity_scope",
       "type": "business_rule",
       "name": "source_id → household_id → household cats 身份作用域",
-      "tags": ["多客户", "隔离", "Re-ID"],
+      "tags": [
+        "多客户",
+        "隔离",
+        "Re-ID"
+      ],
       "evidence": "README.md"
     },
     {
@@ -78,7 +115,11 @@
       "type": "module",
       "name": "RTMPose 关键点与质量过滤",
       "path": "src/eating_behavior/pose.py",
-      "tags": ["RTMPose", "keypoints", "quality"],
+      "tags": [
+        "RTMPose",
+        "keypoints",
+        "quality"
+      ],
       "evidence": "docs/rtmpose_integration.md"
     },
     {
@@ -86,7 +127,11 @@
       "type": "module",
       "name": "吃饭、趴卧、站立与蹲姿状态判断",
       "path": "src/eating_behavior/posture.py",
-      "tags": ["posture", "state", "pose"],
+      "tags": [
+        "posture",
+        "state",
+        "pose"
+      ],
       "evidence": "src/eating_behavior/posture.py"
     },
     {
@@ -94,28 +139,45 @@
       "type": "module",
       "name": "结构化可播报事件输出",
       "path": "src/eating_behavior/events.py",
-      "tags": ["events", "JSON", "timeline"],
+      "tags": [
+        "events",
+        "JSON",
+        "timeline",
+        "flush",
+        "fsync"
+      ],
       "evidence": "src/eating_behavior/events.py"
     },
     {
       "id": "eating.event.cat_passed",
       "type": "event",
       "name": "cat_passed 出现与持续在场事件",
-      "tags": ["presence", "30分钟", "cat_name optional"],
+      "tags": [
+        "presence",
+        "30分钟",
+        "cat_name optional"
+      ],
       "evidence": "README.md"
     },
     {
       "id": "eating.event.cat_eating",
       "type": "event",
       "name": "cat_eating 进食事件",
-      "tags": ["eating", "identity", "timeline"],
+      "tags": [
+        "eating",
+        "identity",
+        "timeline"
+      ],
       "evidence": "README.md"
     },
     {
       "id": "eating.event.posture_changed",
       "type": "event",
       "name": "cat_posture_changed 姿态变化事件",
-      "tags": ["posture", "state-change"],
+      "tags": [
+        "posture",
+        "state-change"
+      ],
       "evidence": "README.md"
     },
     {
@@ -123,7 +185,11 @@
       "type": "event",
       "name": "bowl_food_status 余粮监控占位事件",
       "status": "planned",
-      "tags": ["bowl", "food", "placeholder"],
+      "tags": [
+        "bowl",
+        "food",
+        "placeholder"
+      ],
       "evidence": "README.md"
     },
     {
@@ -131,7 +197,12 @@
       "type": "service",
       "name": "认证实时视频查看器",
       "path": "web/stream-viewer",
-      "tags": ["viewer", "camera", "nodejs", "analysis-feature-flag"],
+      "tags": [
+        "viewer",
+        "camera",
+        "nodejs",
+        "analysis-feature-flag"
+      ],
       "evidence": "web/stream-viewer/README.md"
     },
     {
@@ -140,7 +211,13 @@
       "name": "camera02 无录像标注流与白名单状态链路",
       "path": "tools/run_live_annotated_recording.py",
       "status": "opt-in",
-      "tags": ["camera02", "inference-interval-3", "RTMP", "no-recording"],
+      "tags": [
+        "camera02",
+        "inference-interval-3",
+        "RTMP",
+        "no-recording",
+        "persistent-data-output"
+      ],
       "evidence": "deploy/systemd/eating-behavior-camera02-ai-live.service"
     },
     {
@@ -148,7 +225,11 @@
       "type": "deployment",
       "name": "实时推理与查看器 systemd 部署",
       "path": "deploy/systemd",
-      "tags": ["systemd", "camera", "live"],
+      "tags": [
+        "systemd",
+        "camera",
+        "live"
+      ],
       "evidence": "deploy/systemd/eating-behavior-camera02-ai-live.service"
     },
     {
@@ -156,7 +237,11 @@
       "type": "pipeline",
       "name": "离线训练与模型候选产出",
       "path": "training",
-      "tags": ["training", "offline", "candidate"],
+      "tags": [
+        "training",
+        "offline",
+        "candidate"
+      ],
       "evidence": "training/README.md"
     },
     {
@@ -164,7 +249,12 @@
       "type": "tool",
       "name": "可恢复抽帧与带源映射的扁平化发布",
       "path": "tools/extract_every_50_frames.py",
-      "tags": ["offline", "frames", "manifest", "privacy-boundary"],
+      "tags": [
+        "offline",
+        "frames",
+        "manifest",
+        "privacy-boundary"
+      ],
       "evidence": "tools/extract_every_50_frames.py"
     },
     {
@@ -172,7 +262,11 @@
       "type": "decision",
       "name": "训练产物必须评估、受控复制、校验 SHA-256 后显式注册",
       "status": "accepted",
-      "tags": ["model-governance", "sha256", "production"],
+      "tags": [
+        "model-governance",
+        "sha256",
+        "production"
+      ],
       "evidence": "README.md"
     },
     {
@@ -180,8 +274,111 @@
       "type": "decision",
       "name": "AI 标注流与原始流隔离并通过默认关闭的 Viewer 开关暴露",
       "status": "accepted",
-      "tags": ["camera02", "feature-flag", "status-allowlist", "inference-cadence"],
+      "tags": [
+        "camera02",
+        "feature-flag",
+        "status-allowlist",
+        "inference-cadence"
+      ],
       "evidence": "docs/knowledge/DECISIONS/0001-camera02-analysis-path.md"
+    },
+    {
+      "id": "eating.decision.persistent_runtime",
+      "type": "decision",
+      "name": "camera02 AI 状态和事件输出持久保存于 /data/Eating_behavior/runtime/camera02-ai",
+      "status": "accepted",
+      "tags": [
+        "deployment",
+        "storage-lifecycle",
+        "viewer-status"
+      ],
+      "evidence": "docs/knowledge/DECISIONS/0002-camera02-persistent-runtime.md"
+    },
+    {
+      "id": "eating.rule.code_data_layout",
+      "type": "business_rule",
+      "name": "/root 保存项目运行代码，/data 保存权重和运行数据",
+      "status": "accepted",
+      "tags": [
+        "storage",
+        "deployment",
+        "model-governance",
+        "read-only-viewer-code"
+      ],
+      "evidence": "docs/knowledge/DECISIONS/0003-server-code-data-layout.md"
+    },
+    {
+      "id": "eating.module.alerts",
+      "type": "module",
+      "name": "SQLite 用户视频源登记与持久事件发送",
+      "path": "src/eating_behavior/alerts.py",
+      "tags": [
+        "SQLite",
+        "outbox",
+        "user-mapping",
+        "idempotency",
+        "source-revision",
+        "camelCase-http-boundary",
+        "schema-v2",
+        "numeric-user-id",
+        "username"
+      ],
+      "evidence": "src/eating_behavior/alerts.py"
+    },
+    {
+      "id": "eating.service.events",
+      "type": "service",
+      "name": "独立后端报警发送 systemd 服务",
+      "path": "deploy/systemd/eating-behavior-events.service",
+      "tags": [
+        "HTTPS",
+        "API-key-environment",
+        "persistent-pause",
+        "retry"
+      ],
+      "evidence": "deploy/systemd/eating-behavior-events.service"
+    },
+    {
+      "id": "eating.rule.backend_events",
+      "type": "business_rule",
+      "name": "驼峰三字段 JSON 发送、固定事件 ID 与 HTTP/业务双层回执校验",
+      "tags": [
+        "three-field-contract",
+        "event-whitelist",
+        "idempotency",
+        "camelCase-json",
+        "business-code-validation",
+        "legacy-outbox-preserved",
+        "json-integer-userId",
+        "username-not-sent"
+      ],
+      "evidence": "docs/backend_event_delivery.md"
+    },
+    {
+      "id": "eating.decision.sqlite_events",
+      "type": "decision",
+      "name": "持久 JSONL 与独立 SQLite 发送器分离推理和 HTTP",
+      "status": "accepted",
+      "tags": [
+        "storage",
+        "source-ownership",
+        "outbox",
+        "recovery-boundary"
+      ],
+      "evidence": "docs/knowledge/DECISIONS/0004-sqlite-backend-events.md"
+    },
+    {
+      "id": "eating.decision.numeric_user",
+      "type": "decision",
+      "name": "后端整数用户 ID 与展示用户名分离并显式迁移旧库",
+      "status": "accepted",
+      "tags": [
+        "identity",
+        "schema-v2",
+        "migration",
+        "integer-json"
+      ],
+      "evidence": "docs/knowledge/DECISIONS/0005-numeric-user-identity.md"
     }
   ],
   "edges": [
@@ -346,6 +543,84 @@
       "relation": "governed_by",
       "to": "eating.decision.camera02_analysis",
       "evidence": "docs/knowledge/DECISIONS/0001-camera02-analysis-path.md"
+    },
+    {
+      "from": "eating.pipeline.camera02_analysis",
+      "relation": "governed_by",
+      "to": "eating.decision.persistent_runtime",
+      "evidence": "docs/knowledge/DECISIONS/0002-camera02-persistent-runtime.md"
+    },
+    {
+      "from": "eating.service.viewer",
+      "relation": "governed_by",
+      "to": "eating.decision.persistent_runtime",
+      "evidence": "docs/knowledge/DECISIONS/0002-camera02-persistent-runtime.md"
+    },
+    {
+      "from": "eating.config.models",
+      "relation": "governed_by",
+      "to": "eating.rule.code_data_layout",
+      "evidence": "docs/knowledge/DECISIONS/0003-server-code-data-layout.md"
+    },
+    {
+      "from": "eating.deployment.systemd",
+      "relation": "governed_by",
+      "to": "eating.rule.code_data_layout",
+      "evidence": "docs/knowledge/DECISIONS/0003-server-code-data-layout.md"
+    },
+    {
+      "from": "eating.service.viewer",
+      "relation": "governed_by",
+      "to": "eating.rule.code_data_layout",
+      "evidence": "docs/knowledge/DECISIONS/0003-server-code-data-layout.md"
+    },
+    {
+      "from": "eating.project",
+      "relation": "contains",
+      "to": "eating.service.events",
+      "evidence": "docs/backend_event_delivery.md"
+    },
+    {
+      "from": "eating.service.events",
+      "relation": "uses",
+      "to": "eating.module.alerts",
+      "evidence": "deploy/systemd/eating-behavior-events.service"
+    },
+    {
+      "from": "eating.module.alerts",
+      "relation": "consumes",
+      "to": "eating.module.events",
+      "evidence": "src/eating_behavior/alerts.py"
+    },
+    {
+      "from": "eating.pipeline.camera02_analysis",
+      "relation": "uses",
+      "to": "eating.module.alerts",
+      "evidence": "tools/run_live_annotated_recording.py"
+    },
+    {
+      "from": "eating.module.alerts",
+      "relation": "governed_by",
+      "to": "eating.rule.backend_events",
+      "evidence": "tests/test_alerts.py"
+    },
+    {
+      "from": "eating.module.alerts",
+      "relation": "governed_by",
+      "to": "eating.decision.sqlite_events",
+      "evidence": "docs/knowledge/DECISIONS/0004-sqlite-backend-events.md"
+    },
+    {
+      "from": "eating.service.events",
+      "relation": "governed_by",
+      "to": "eating.rule.code_data_layout",
+      "evidence": "deploy/systemd/eating-behavior-events.service"
+    },
+    {
+      "from": "eating.module.alerts",
+      "relation": "governed_by",
+      "to": "eating.decision.numeric_user",
+      "evidence": "docs/knowledge/DECISIONS/0005-numeric-user-identity.md"
     }
   ]
 }

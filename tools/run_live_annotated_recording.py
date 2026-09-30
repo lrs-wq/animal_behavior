@@ -68,7 +68,9 @@ def inference_due(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--source")
+    source.add_argument("--source-db", type=Path, help="Read the assigned RTMP URL from the event SQLite registry")
     parser.add_argument("--source-id", required=True)
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--models-config", required=True, type=Path)
@@ -103,7 +105,18 @@ def parse_args() -> argparse.Namespace:
         help="Disable MP4 segments; requires --publish-url",
     )
     parser.add_argument("--ffmpeg", default=shutil.which("ffmpeg") or "ffmpeg")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.source_registry_revision = None
+    if args.source_db is not None:
+        from eating_behavior.alerts import EventStore
+
+        binding = EventStore(args.source_db).binding(args.source_id)
+        expected_events = (args.output_root / "events" / "announcement_events.jsonl").resolve()
+        if Path(binding["event_file"]).resolve() != expected_events:
+            parser.error("output-root does not match the registered event file")
+        args.source = binding["rtmp_url"]
+        args.source_registry_revision = binding["revision"]
+    return args
 
 
 def log_event(event: str, **fields: Any) -> None:
@@ -584,6 +597,7 @@ def run(args: argparse.Namespace) -> int:
         "schema_version": 1,
         "pid": os.getpid(),
         "source_id": args.source_id,
+        "source_registry_revision": getattr(args, "source_registry_revision", None),
         "source": args.source,
         "output_root": str(output_root),
         "started_at": utc_now(),

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes, scryptSync } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 const SERVER_URL = new URL("../server.mjs", import.meta.url);
@@ -42,7 +42,7 @@ async function waitForHealth(origin, child) {
   throw new Error("test server did not become healthy");
 }
 
-async function startServer({ analysisEnabled, port }) {
+async function startServer({ analysisEnabled, port, statusPath = STATUS_PATH }) {
   const child = spawn(process.execPath, [SERVER_URL.pathname], {
     env: {
       ...process.env,
@@ -53,7 +53,7 @@ async function startServer({ analysisEnabled, port }) {
       JOYAI_VIEWER_SESSION_SECRET: "test-session-secret-that-is-long-enough-1234",
       JOYAI_VIEWER_SESSION_TTL_SECONDS: "600",
       JOYAI_ANALYSIS_ENABLED: String(analysisEnabled),
-      JOYAI_ANALYSIS_STATUS_PATH: STATUS_PATH,
+      JOYAI_ANALYSIS_STATUS_PATH: statusPath,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -204,5 +204,70 @@ test("AI view remains hidden until its server-side feature flag is enabled", asy
       if (error.code !== "ENOENT") throw error;
     });
     await stopServer(enabled.child);
+  }
+});
+
+test("persistent data status remains authenticated and filtered", async () => {
+  const root = "/data/Eating_behavior/runtime";
+  await mkdir(root, { recursive: true });
+  const directory = await mkdtemp(root + "/viewer-test-");
+  const statusPath = directory + "/status.json";
+  let server;
+  try {
+    const now = new Date().toISOString();
+    await writeFile(statusPath, JSON.stringify({
+      state: "streaming", updated_at: now, last_frame_at: now,
+      pose_enabled: true, posture_enabled: true,
+      private_context: "must-not-be-exposed",
+    }), { mode: 0o600 });
+    server = await startServer({
+      analysisEnabled: true, port: 31000 + (process.pid % 10000), statusPath,
+    });
+    const denied = await fetch(server.origin + "/api/analysis/status");
+    assert.equal(denied.status, 401);
+    const cookie = await login(server.origin);
+    const response = await api(server.origin, cookie, "analysis/status");
+    assert.equal(response.status, 200);
+    const status = await response.json();
+    assert.equal(status.available, true);
+    assert.equal(status.state, "streaming");
+    assert.equal(Object.hasOwn(status, "private_context"), false);
+  } finally {
+    if (server) await stopServer(server.child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("status path cannot escape the allowed storage roots", async () => {
+  for (const statusPath of [
+    "/data/other/status.json",
+    "/data/Eating_behavior/runtime/../../private/status.json",
+    "/run/../etc/passwd",
+    "relative/status.json",
+  ]) {
+    const child = spawn(process.execPath, [SERVER_URL.pathname], {
+      env: {
+        ...process.env,
+        JOYAI_VIEWER_USERNAME: USERNAME,
+        JOYAI_VIEWER_PASSWORD_HASH: passwordHash(),
+        JOYAI_VIEWER_SESSION_SECRET: "test-session-secret-that-is-long-enough-1234",
+        JOYAI_ANALYSIS_STATUS_PATH: statusPath,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (data) => { stderr += data; });
+    try {
+      const [code] = await Promise.race([
+        once(child, "exit"),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error("invalid configuration did not exit")), 3000,
+        )),
+      ]);
+      assert.notEqual(code, 0);
+      assert.match(stderr, /JOYAI_ANALYSIS_STATUS_PATH/);
+    } finally {
+      if (child.exitCode === null) await stopServer(child);
+    }
   }
 });

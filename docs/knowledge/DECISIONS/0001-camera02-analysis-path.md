@@ -40,3 +40,7 @@ camera02 需要在不改变原始监控流、不把运行事件或源信息暴�
 - `deploy/systemd/joyai-stream-viewer-analysis-enabled.conf`
 - `web/stream-viewer/server.mjs`
 - `web/stream-viewer/tests/analysis-feature.test.mjs`
+
+## 后续调整
+
+2026-09-05：[0002](0002-camera02-persistent-runtime.md) 将 AI 状态、有效配置和事件输出从 /run 迁移到 /data/Eating_behavior/runtime/camera02-ai/；其余流隔离、推理间隔和字段白名单决策继续有效。

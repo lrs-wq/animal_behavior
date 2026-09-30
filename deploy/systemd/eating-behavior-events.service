@@ -1,0 +1,29 @@
+[Unit]
+Description=Eating Behavior SQLite registry and backend event sender
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/data/Eating_behavior
+ConditionPathIsMountPoint=/data
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Eating_behavior
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/root/Eating_behavior/src
+EnvironmentFile=/etc/eating-behavior-events.env
+ExecStart=/opt/eating-behavior/conda-env/bin/python -B -m eating_behavior.alerts serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/data/Eating_behavior/events
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

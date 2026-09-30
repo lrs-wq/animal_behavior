@@ -2,6 +2,7 @@
 Description=JoyAI authenticated live stream viewer
 After=network-online.target joyai-mediamtx.service
 Wants=network-online.target
+RequiresMountsFor=/data/Eating_behavior/runtime/camera02-ai
 
 [Service]
 Type=simple
@@ -10,7 +11,7 @@ Group=joyai-viewer
 WorkingDirectory=/opt/joyai-stream-viewer
 Environment=NODE_ENV=production
 Environment=JOYAI_ANALYSIS_ENABLED=false
-Environment=JOYAI_ANALYSIS_STATUS_PATH=/run/eating-behavior-camera02-ai/status.json
+Environment=JOYAI_ANALYSIS_STATUS_PATH=/data/Eating_behavior/runtime/camera02-ai/status.json
 EnvironmentFile=/etc/joyai-stream-viewer.env
 ExecStart=/usr/bin/node /opt/joyai-stream-viewer/server.mjs
 Restart=on-failure
@@ -25,6 +26,8 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
+# Load the canonical /root code without granting access to the rest of /root.
+BindReadOnlyPaths=/root/Eating_behavior/web/stream-viewer:/opt/joyai-stream-viewer
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true

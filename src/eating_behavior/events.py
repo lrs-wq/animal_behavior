@@ -204,6 +204,8 @@ class AnnouncementRecorder:
     def _write_jsonl(self, serialized_event: str) -> None:
         with self.jsonl_path.open("a", encoding="utf-8") as f:
             f.write(serialized_event + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def _write_csv(self, csv_row: tuple[tuple[str, Any], ...]) -> None:
         needs_header = not self.csv_path.exists() or self.csv_path.stat().st_size == 0

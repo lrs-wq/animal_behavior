@@ -2,20 +2,24 @@
 Description=Eating Behavior camera02 annotated live stream for JoyAI
 After=network-online.target joyai-mediamtx.service joyai-mediamtx-ingress.service
 Wants=network-online.target joyai-mediamtx.service joyai-mediamtx-ingress.service
+RequiresMountsFor=/data/Eating_behavior/runtime/camera02-ai
+ConditionPathIsMountPoint=/data
 
 [Service]
 Type=simple
 User=root
 Group=joyai-viewer
 WorkingDirectory=/root/Eating_behavior
-RuntimeDirectory=eating-behavior-camera02-ai
-RuntimeDirectoryMode=0750
+ExecStartPre=/usr/bin/install -d -o root -g joyai-viewer -m 0750 /data/Eating_behavior/runtime /data/Eating_behavior/runtime/camera02-ai
 Environment=HOME=/root
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=XDG_CACHE_HOME=/data/Eating_behavior/cache
+Environment=YOLO_CONFIG_DIR=/data/Eating_behavior/cache/ultralytics
 Environment=PYTHONPATH=/root/Eating_behavior/src:/root/Eating_behavior
 Environment=YOLO_AUTOINSTALL=false
 Environment=WANDB_DISABLED=true
-ExecStart=/opt/eating-behavior/conda-env/bin/python /root/Eating_behavior/tools/run_live_annotated_recording.py --source rtmp://127.0.0.1:11935/live/camera02 --source-id camera02 --output-root /run/eating-behavior-camera02-ai --models-config /root/Eating_behavior/configs/models.yaml --pipeline-config /root/Eating_behavior/configs/pipeline.yaml --device 0 --detection-confidence 0.60 --inference-interval 3 --publish-url rtmp://127.0.0.1:11935/live/camera02-ai --no-recording --reconnect-delay-seconds 5 --progress-every 25
+ExecStart=/opt/eating-behavior/conda-env/bin/python /root/Eating_behavior/tools/run_live_annotated_recording.py --source-db /data/Eating_behavior/events/events.sqlite3 --source-id camera02 --output-root /data/Eating_behavior/runtime/camera02-ai --models-config /root/Eating_behavior/configs/models.yaml --pipeline-config /root/Eating_behavior/configs/pipeline.yaml --device 0 --detection-confidence 0.60 --inference-interval 3 --publish-url rtmp://127.0.0.1:11935/live/camera02-ai --no-recording --reconnect-delay-seconds 5 --progress-every 25
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM

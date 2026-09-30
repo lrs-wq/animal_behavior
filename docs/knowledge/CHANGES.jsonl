@@ -5,3 +5,8 @@
 {"date":"2026-08-13","type":"feature","summary":"查看器增加 camera03 与 camera04 槽位。","areas":["viewer","multi-camera"],"source_commit":"8eb1a33"}
 {"date":"2026-09-01","type":"feature","summary":"新增 camera02 可选 AI 分析链路：受控姿态模型、每 3 帧一次推理、无录像标注流、白名单状态接口和 Viewer 开关。","areas":["model-governance","live-inference","deployment","viewer"]}
 {"date":"2026-09-01","type":"tooling","summary":"加入可恢复的按源帧间隔抽取与扁平化发布工具，并明确原始媒体、抽取帧和路径清单不进入 Git。","areas":["offline-tools","dataset-preparation","privacy"]}
+{"date": "2026-09-05", "type": "deployment", "summary": "camera02 AI 输出由 /run 迁移到 /data/Eating_behavior/runtime/camera02-ai，停止服务保留状态与事件文件；Viewer 同步更新路径、规范化目录校验及数据盘挂载依赖。", "areas": ["deployment", "viewer", "storage-lifecycle"]}
+{"date": "2026-09-05", "type": "deployment", "summary": "固定服务器代码与数据分盘规则：权重与运行缓存归入 /data，源码及可执行姿态配置保留 /root；Viewer 改为只读映射加载 /root 源码并保留专用用户和目录隔离。", "areas": ["deployment", "storage", "model-governance", "viewer"]}
+{"date": "2026-09-05", "type": "feature", "summary": "新增 SQLite 用户视频源登记和独立后端事件发送；生产者读取绑定并报告版本，JSONL 持久写入后事务导入固定三字段待发，支持幂等重试、鉴权暂停、租约恢复及映射变更隔离。", "areas": ["event", "source", "user-mapping", "storage", "backend-api", "deployment"]}
+{"date": "2026-09-07", "type": "fix", "summary": "按确认的后端契约将发送 JSON 字段转换为 eventId/userId/eventType，保留内部旧队列载荷及幂等 ID；补充 HTTP 200 中业务错误分类和驼峰回执校验，避免字段绑定失败及误判成功。", "areas": ["backend-api", "event", "compatibility", "verification"]}
+{"date": "2026-09-07", "type": "fix", "summary": "将后端 userId 固定为正整数 JSON number，SQLite 升级为 v2 整数用户主键并新增独立 username；提供带一致性备份与事务回滚的显式迁移，保留游标及事件 ID，只纠正已知未交付活跃载荷。", "areas": ["user-mapping", "storage", "backend-api", "compatibility", "verification"]}

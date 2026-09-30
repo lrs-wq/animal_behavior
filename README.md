@@ -6,6 +6,34 @@
 
 仓库中的 `training/` 和姿态数据工具用于离线研发、回归实验和模型候选产出，与正式推理运行时隔离。训练结果不会自动进入生产配置；候选模型必须经过评估、复制到受控模型目录、计算 SHA-256，并显式更新 `configs/models.yaml` 后才能被推理端加载。
 
+## 后端报警与用户视频源映射
+
+`src/eating_behavior/alerts.py` 提供 SQLite 用户/RTMP 登记和独立后台发送服务。
+直播生产者通过 `--source-db` 读取绑定视频源，发送端从持久 JSONL 导入白名单事件，
+事务保存游标与待发请求，使用原 `record_id` 幂等重试。数据库位于
+`/data/Eating_behavior/events/events.sqlite3`，凭据由 `/etc/eating-behavior-events.env` 注入。
+新增真实用户、服务安装、鉴权暂停恢复和可靠性边界见 [后端报警发送运维文档](docs/backend_event_delivery.md)。
+
+## 服务器代码与数据目录约定
+
+| 类别 | 实际保存位置 |
+| --- | --- |
+| 项目运行代码、脚本、配置模板、知识库 | /root/Eating_behavior |
+| 可执行 RTMPose Python 配置 | /root/Eating_behavior/models/rtmpose |
+| 受 SHA-256 校验的模型权重 | /data/Eating_behavior/models |
+| 媒体、数据集、事件、持久状态、测试输出、缓存和备份 | /data/Eating_behavior 下的对应目录 |
+| AI 直播输出 | /data/Eating_behavior/runtime/camera02-ai |
+
+Viewer 的代码源为 /root/Eating_behavior/web/stream-viewer。systemd 将其只读映射到
+服务私有的 /opt/joyai-stream-viewer，保留专用用户与 ProtectHome；该 /opt 路径
+仅是加载入口，不另行维护部署代码副本。修改代码后进行检查并重启 Viewer 即可生效。
+
+Python 环境 /opt/eating-behavior/conda-env、系统 Node 与 /etc 下的服务配置/凭据
+属于基础设施，沿用系统目录。/root/Eating_behavior/data 是指向数据盘的目录链接。
+生产或手动运行服务器脚本时必须显式将输出和缓存指向 /data，不依赖源码目录下的
+相对 outputs 默认值。路径迁移不得改变模型内容或取消校验。
+
+
 ## 0. 当前主业务链路
 
 当前正式项目优先面向用户视频流实时推理，主入口必须同时兼容视频文件、视频文件夹、摄像头编号和 RTSP / HTTP 视频流。
