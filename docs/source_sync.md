@@ -6,7 +6,7 @@ GitHub `lrs-wq/animal_behavior` 通过独立 `github` remote 接收经过核对�
 
 2026-09-30 首次同步在 `codex/github-sync-20260930` 分支汇总服务器正式版本与本地
 统一可视化代码、采集文档，并将同一提交发布到 Codeup 同名分支和 GitHub `main`。
-原服务器 `video-stream-test` 和本地研发分支继续使用原有阿里云跟踪关系。
+服务器 `video-stream-test` 保留既有阿里云跟踪；本地研发分支和同步分支均跟踪 `origin`。
 同步分支不改变已运行服务的工作目录或配置。
 
 ## 上传范围
@@ -47,3 +47,20 @@ git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'
 最后核对三个提交 SHA 一致，upstream 为 `origin/<发布分支>`。GitHub 推送不使用
 `--set-upstream`；不使用全仓库 mirror 或强制推送。若 GitHub `main` 已有新的提交，
 先检查并合并差异，再进行普通推送。
+
+## 当前本机 Git 连接
+
+本机没有独立的 Codeup 公钥权限，因此本项目的 Git SSH 请求通过已授权的
+阿里云服务器 `39.106.120.253` 转发，使用服务器既有 Codeup/GitHub SSH 认证。
+本机私有 Git 元数据中的 `ssh-via-aliyun.py` 由 `core.sshCommand` 调用；
+私钥留在服务器，`origin` 的 URL 仍指向 Codeup。连接需要该服务器可用。
+
+此配置只记录在当前本机仓库的 `.git` 中，不随源码分发。检查配置：
+
+```bash
+git config --local --get core.sshCommand
+git config --local --get remote.pushDefault
+git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'
+```
+
+其他机器可配置自己的 Git SSH 权限，或从已授权服务器执行前述同步命令。

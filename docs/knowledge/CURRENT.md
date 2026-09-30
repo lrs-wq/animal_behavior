@@ -111,3 +111,4 @@ Python 环境 /opt/eating-behavior/conda-env、系统 Node 与 /etc 下的服务
 - 2026-09-30 同步分支汇总服务器正式版本与本地统一可视化及采集文档，向 Codeup 同名分支与 GitHub `main` 发布同一提交；运行服务的源码目录保持 `/root/Eating_behavior`。
 - 仓库媒体采用逐文件白名单，仅分发 `docs/demo/` 的少量标注演示结果；原始媒体、训练数据、模型权重、运行事件、用户映射及凭据保留在仓库外。操作依据见 `docs/source_sync.md` 与 ADR 0006。
 - `src/eating_behavior/visualization.py` 统一实时 `--show` 与批量视频的检测框、毛色/姿态标签、骨架及进食头关联线。标签优先使用确认姿态，其次使用当前观察；无法判断时显示 unknown。渲染不推进事件状态机。
+- 当前本机 Git SSH 通过已授权的阿里云服务器转发，使用服务器既有 Git 认证；默认推送仍为 origin，本机研发分支与同步分支均跟踪 Codeup。转发配置保存在本机 .git，不随源码分发；运行时推理没有新增依赖。

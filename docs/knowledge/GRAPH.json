@@ -401,7 +401,8 @@
         "source",
         "distribution",
         "codeup",
-        "github"
+        "github",
+        "git-ssh-transport"
       ],
       "evidence": "docs/source_sync.md"
     }
