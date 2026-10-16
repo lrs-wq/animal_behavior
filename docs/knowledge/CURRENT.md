@@ -119,3 +119,9 @@ Python 环境 /opt/eating-behavior/conda-env、系统 Node 与 /etc 下的服务
 - 分发当前生产检测、v9 验证 mAP50-95 最优检测候选、现行框架 best 毛色分类器，以及真实机位适配 RTMPose 第二阶段 epoch 140；指标和评测局限见 docs/model_weights.md。不能跨数据集凭单个数值宣称全局最优。
 - configs/models.github.yaml 在仓库根目录加载现行组合；configs/models.github.best-map5095.yaml 只替换检测候选。两者保持显式允许目录、配置与 checkpoint SHA-256。
 - 生产 models.yaml 与 /data 中实际资产不自动改变；训练推广仍遵循评估、受控复制和显式注册。Codeup 跟踪与同提交 GitHub 同步规则保持。
+
+## 源码许可边界
+
+- 2026-10-16 起，维护者有权许可的原创内容采用 PolyForm Noncommercial 1.0.0；商业使用须另行取得书面授权。
+- 第三方代码、模型与数据及必须保留上游许可的内容不被重新许可；旧版本已授予的权利继续有效。
+- 依据：`LICENSE`、`COPYRIGHT.md`。本次只变更分发许可和文档，不改变应用行为、部署或生产配置。

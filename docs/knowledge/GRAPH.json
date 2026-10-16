@@ -443,6 +443,18 @@
         "distribution"
       ],
       "evidence": "configs/models.github.best-map5095.yaml"
+    },
+    {
+      "id": "eating.rule.noncommercial_distribution",
+      "type": "business_rule",
+      "name": "原创内容非商用许可与第三方授权边界",
+      "status": "active",
+      "tags": [
+        "licensing",
+        "distribution",
+        "noncommercial"
+      ],
+      "evidence": "COPYRIGHT.md"
     }
   ],
   "edges": [
@@ -733,6 +745,12 @@
       "relation": "governed_by",
       "to": "eating.rule.selected_model_distribution",
       "evidence": "docs/model_weights.md"
+    },
+    {
+      "from": "eating.project",
+      "relation": "governed_by",
+      "to": "eating.rule.noncommercial_distribution",
+      "evidence": "LICENSE"
     }
   ]
 }

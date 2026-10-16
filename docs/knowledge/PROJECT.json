@@ -72,7 +72,9 @@
     "docs/source_sync.md",
     "docs/knowledge/DECISIONS/0006-github-codeup-sync.md",
     "docs/model_weights.md",
-    "docs/knowledge/DECISIONS/0007-selected-model-distribution.md"
+    "docs/knowledge/DECISIONS/0007-selected-model-distribution.md",
+    "LICENSE",
+    "COPYRIGHT.md"
   ],
   "watch_rules": [
     {
@@ -232,6 +234,16 @@
         "model-governance",
         "distribution",
         "verification"
+      ]
+    },
+    {
+      "paths": [
+        "LICENSE",
+        "COPYRIGHT.md"
+      ],
+      "knowledge": [
+        "licensing",
+        "distribution"
       ]
     }
   ],
