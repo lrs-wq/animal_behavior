@@ -96,3 +96,7 @@ node_modules/
 !/models/weights/detection_v9_map5095_best.pt
 !/models/weights/coat_classifier_best.pt
 !/models/weights/rtmpose_m_camera05_realbbox_stage2_epoch140-56b9fb51_20260715.pth
+
+# Selected README documentation assets only
+!/docs/showcase/workflow.svg
+!/docs/showcase/behavior-preview.gif

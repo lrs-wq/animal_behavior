@@ -1,13 +1,30 @@
 # 猫咪进食行为识别正式项目
 
-## 许可证与商业使用 / License and commercial use
-
-**本仓库中维护者有权许可的原创内容采用 [PolyForm Noncommercial 1.0.0](LICENSE)，仅许可非商业用途；商业使用须另行取得书面授权。**
-第三方内容、必须保留上游许可的部分及旧版本已授予的权利不受此变更覆盖。详见 [版权与第三方声明](COPYRIGHT.md)。
-
-Original material the maintainer is entitled to license is available for noncommercial purposes under [PolyForm Noncommercial 1.0.0](LICENSE). Commercial use requires separate written permission. Third-party and previously granted rights are preserved; see [COPYRIGHT.md](COPYRIGHT.md).
-
 本项目是猫咪进食行为识别的正式推理工程，负责接入外部训练好的模型，完成视频推理、进食事件分析、猫咪身份识别、结果评估和错误诊断。
+
+## 效果预览
+
+[![猫咪检测、姿态骨架与行为标签的动态预览；点击查看30秒视频](docs/showcase/behavior-preview.gif)](docs/demo/cat-behavior-demo.mp4)
+
+**[查看 / 下载 30 秒标注视频](docs/demo/cat-behavior-demo.mp4)** · [素材说明](docs/demo/README.md)
+
+| 彩色画面 · standing | 红外画面 · crouching |
+| --- | --- |
+| ![彩色画面的检测框、毛色与姿态标签](docs/demo/cat-standing.jpg) | ![红外画面的姿态与行为标签](docs/demo/cat-crouching.jpg) |
+
+素材来自 2026-08-21 的既有标注录像。GIF 是已公开 30 秒视频的 5 秒节选，可能包含历史模型误判，用于展示输出形式。
+
+## 工作流程
+
+![视频输入、检测与家庭内身份路由、行为判断和结构化事件输出](docs/showcase/workflow.svg)
+
+## 项目演示
+
+- **直接看效果**：播放上方视频，无需安装模型。
+- **本地复现**：按“快速开始”准备依赖与模型，使用仓库的 `configs/models.github.yaml`，对自行准备的视频运行推理；详见 [展示与复现说明](docs/showcase/README.md)。
+- **理解输出**：观察画面中的检测框、姿态骨架与标签，再对照生成的 JSONL / CSV 事件。图库 Re-ID 和余粮模型仍不属于已完成能力。
+
+---
 
 > 当前版本：`0.1.0`
 >
@@ -15,12 +32,7 @@ Original material the maintainer is entitled to license is available for noncomm
 >
 > 本次源码验证：`427` 项 Python 测试、`3` 项 Viewer 测试通过。
 
-## 演示素材与代码同步
-
-[演示说明](docs/demo/README.md) 提供一个可直接播放的标注视频和两张输出截图。
-经授权的精选模型权重已收入 [models/weights](models/weights/README.md)，可随仓库克隆；其余图片、视频、数据集和运行文件不上传。
-
-![猫咪行为标注示例](docs/demo/cat-standing.jpg)
+## 源码同步与运行边界
 
 阿里云 Codeup 继续作为默认 `origin`，GitHub 通过独立 remote 接收相同源码提交。
 具体分支、上传范围及后续操作见 [源码同步约定](docs/source_sync.md)。
@@ -1286,3 +1298,10 @@ outputs/
 ```
 
 正式运行时不启动训练任务，也不依赖训练数据或 W&B。仓库内保留的 `training/` 只用于离线研发，必须与 `src/eating_behavior/` 和生产 worker 镜像隔离。这里要做的是把模型安全地接入、把事件稳定地输出、把问题准确地定位。
+
+## 许可证与商业使用 / License and commercial use
+
+**本仓库中维护者有权许可的原创内容采用 [PolyForm Noncommercial 1.0.0](LICENSE)，仅许可非商业用途；商业使用须另行取得书面授权。**
+第三方内容、必须保留上游许可的部分及旧版本已授予的权利不受此变更覆盖。详见 [版权与第三方声明](COPYRIGHT.md)。
+
+Original material the maintainer is entitled to license is available for noncommercial purposes under [PolyForm Noncommercial 1.0.0](LICENSE). Commercial use requires separate written permission. Third-party and previously granted rights are preserved; see [COPYRIGHT.md](COPYRIGHT.md).

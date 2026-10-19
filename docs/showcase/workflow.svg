@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title desc">
+<title id="title">从视频画面到结构化事件</title><desc id="desc">检测、跟踪、身份路由与行为状态机共同形成输出；视频接入 → 检测与身份 → 姿态与行为 → 画面与事件</desc>
+<rect width="1200" height="340" rx="20" fill="#f8fafc"/>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif}.title{font-size:30px;font-weight:700;fill:#172b40}.sub{font-size:17px;fill:#536477}.label{font-size:22px;font-weight:650;fill:#172b40}.small{font-size:16px;fill:#536477}</style>
+<rect x="36" y="34" width="5" height="32" rx="2" fill="#27618a"/><text class="title" x="57" y="61">从视频画面到结构化事件</text>
+<text class="sub" x="37" y="94">检测、跟踪、身份路由与行为状态机共同形成输出</text>
+<rect x="36" y="126" width="252" height="138" rx="12" fill="white" stroke="#dbe3eb"/><circle cx="64" cy="154" r="13" fill="#27618a"/><text x="64" y="160" text-anchor="middle" fill="white" font-size="16">1</text><text class="label" x="56" y="197">视频接入</text><text class="small" x="56" y="225">文件 / 摄像头 / RTSP</text><text class="small" x="56" y="248">HTTP 视频源</text>
+<path d="M296 193h22m-7-7 7 7-7 7" fill="none" stroke="#27618a" stroke-width="3"/>
+<rect x="328" y="126" width="252" height="138" rx="12" fill="white" stroke="#dbe3eb"/><circle cx="356" cy="154" r="13" fill="#27618a"/><text x="356" y="160" text-anchor="middle" fill="white" font-size="16">2</text><text class="label" x="348" y="197">检测与身份</text><text class="small" x="348" y="225">猫、进食头与毛色</text><text class="small" x="348" y="248">按家庭范围确认身份</text>
+<path d="M588 193h22m-7-7 7 7-7 7" fill="none" stroke="#27618a" stroke-width="3"/>
+<rect x="620" y="126" width="252" height="138" rx="12" fill="white" stroke="#dbe3eb"/><circle cx="648" cy="154" r="13" fill="#27618a"/><text x="648" y="160" text-anchor="middle" fill="white" font-size="16">3</text><text class="label" x="640" y="197">姿态与行为</text><text class="small" x="640" y="225">可选 RTMPose</text><text class="small" x="640" y="248">进食 / 在场 / 姿态状态</text>
+<path d="M880 193h22m-7-7 7 7-7 7" fill="none" stroke="#27618a" stroke-width="3"/>
+<rect x="912" y="126" width="252" height="138" rx="12" fill="white" stroke="#dbe3eb"/><circle cx="940" cy="154" r="13" fill="#27618a"/><text x="940" y="160" text-anchor="middle" fill="white" font-size="16">4</text><text class="label" x="932" y="197">画面与事件</text><text class="small" x="932" y="225">标注视频与实时叠加</text><text class="small" x="932" y="248">JSONL / CSV 输出</text>
+<text class="small" x="37" y="307">下方样例为既有标注录像节选，用于展示输出形式，不代表当前模型准确率。</text></svg>
